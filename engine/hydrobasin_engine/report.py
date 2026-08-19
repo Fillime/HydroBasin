@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from datetime import datetime
@@ -176,41 +175,13 @@ def _latex_escape(value) -> str:
     return "".join(replacements.get(ch, ch) for ch in text)
 
 
-def _find_pdflatex() -> str | None:
-    found = shutil.which("pdflatex")
-    if found:
-        return found
-
-    candidates: list[Path] = []
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    program_files = os.environ.get("ProgramFiles")
-    program_files_x86 = os.environ.get("ProgramFiles(x86)")
-
-    if local_app_data:
-        root = Path(local_app_data)
-        candidates.extend([
-            root / "Programs" / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe",
-            root / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe",
-        ])
-    if program_files:
-        candidates.append(Path(program_files) / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe")
-    if program_files_x86:
-        candidates.append(Path(program_files_x86) / "MiKTeX" / "miktex" / "bin" / "pdflatex.exe")
-
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate)
-    return None
-
-
 def _subbasin_table_rows(subbasins) -> str:
     if subbasins is None or subbasins.empty or "area_km2" not in subbasins.columns:
         return ""
     top = subbasins.sort_values("area_km2", ascending=False).head(12)
-    rows = []
-    for _, row in top.iterrows():
-        rows.append(f"{int(row['subbasin_id'])} & {_n(float(row['area_km2']), 2)} \\\\")
-    return "\n".join(rows)
+    return "\n".join(
+        f"{int(row['subbasin_id'])} & {_n(float(row['area_km2']), 2)} \\\\" for _, row in top.iterrows()
+    )
 
 
 def _generar_fuente_latex(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None) -> str:
@@ -266,7 +237,6 @@ def _generar_fuente_latex(output_dir: Path, summary: dict, figures: dict[str, st
 \usepackage{{lastpage}}
 \geometry{{top=2.2cm,bottom=2.1cm,left=2.5cm,right=2.5cm}}
 \definecolor{{hydro}}{{HTML}}{{1F5F66}}
-\definecolor{{hydrogray}}{{HTML}}{{5F6B72}}
 \hypersetup{{colorlinks=true,linkcolor=hydro,urlcolor=hydro,pdfauthor={{HydroBasin Watershed Studio}},pdftitle={{Informe de delimitación y análisis de cuenca hidrográfica}}}}
 \captionsetup{{font=small,labelfont=bf,labelsep=period}}
 \setlength{{\parindent}}{{0pt}}
@@ -279,7 +249,6 @@ def _generar_fuente_latex(output_dir: Path, summary: dict, figures: dict[str, st
 \renewcommand{{\headrulewidth}}{{0.4pt}}
 
 \begin{{document}}
-
 \begin{{titlepage}}
 \thispagestyle{{empty}}
 \vspace*{{1.4cm}}
@@ -346,40 +315,11 @@ CRS de cálculo & \multicolumn{{2}}{{l}}{{{_latex_escape(summary.get('crs_calcul
 {subtable}
 
 \section{{Cartografía técnica}}
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.94\textwidth]{{{figures['dem']}}}
-\caption{{Contexto regional del DEM y localización de la cuenca delimitada.}}
-\label{{fig:dem}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.94\textwidth]{{{figures['hillshade']}}}
-\caption{{Relieve sombreado de la cuenca.}}
-\label{{fig:hillshade}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.94\textwidth]{{{figures['accumulation']}}}
-\caption{{Acumulación de flujo dentro de la cuenca en escala logarítmica.}}
-\label{{fig:acc}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.94\textwidth]{{{figures['watershed']}}}
-\caption{{Cuenca principal y red de drenaje extraída.}}
-\label{{fig:cuenca}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.94\textwidth]{{{figures['strahler']}}}
-\caption{{Jerarquía de la red de drenaje según el orden de Strahler.}}
-\label{{fig:strahler}}
-\end{{figure}}
+\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['dem']}}}\caption{{Contexto regional del DEM y localización de la cuenca delimitada.}}\label{{fig:dem}}\end{{figure}}
+\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['hillshade']}}}\caption{{Relieve sombreado de la cuenca.}}\label{{fig:hillshade}}\end{{figure}}
+\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['accumulation']}}}\caption{{Acumulación de flujo dentro de la cuenca en escala logarítmica.}}\label{{fig:acc}}\end{{figure}}
+\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['watershed']}}}\caption{{Cuenca principal y red de drenaje extraída.}}\label{{fig:cuenca}}\end{{figure}}
+\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['strahler']}}}\caption{{Jerarquía de la red de drenaje según el orden de Strahler.}}\label{{fig:strahler}}\end{{figure}}
 {subfigure}
 
 \section{{Interpretación del umbral de drenaje}}
@@ -387,64 +327,57 @@ El área mínima de aporte controla la densidad de la red extraída. Valores men
 
 \section{{Observaciones técnicas}}
 Los límites presentados corresponden a resultados derivados del DEM y no sustituyen cartografía hidrográfica oficial. Para estudios de detalle se recomienda validar el exutorio, la red y las divisorias mediante cartografía de mayor resolución, información de campo y fuentes oficiales cuando estén disponibles.
-
 \end{{document}}
 """
     tex_path.write_text(tex, encoding="utf-8")
     return tex_path.name
 
 
+def _find_tectonic() -> str | None:
+    """Localiza el ejecutable instalado por `pip install tecto`."""
+    return shutil.which("tectonic") or shutil.which("tecto")
+
+
 def _compile_latex(output_dir: Path, tex_name: str) -> dict:
-    pdflatex = _find_pdflatex()
+    tectonic = _find_tectonic()
     pdf_path = output_dir / Path(tex_name).with_suffix(".pdf").name
-    if not pdflatex:
+    if not tectonic:
         return {
             "compiled": False,
             "pdf": None,
             "compiler_found": False,
             "compiler_path": None,
-            "compile_error": "HydroBasin no pudo localizar pdflatex en el PATH ni en las rutas habituales de MiKTeX.",
+            "compile_error": "No se encontró Tectonic. Ejecuta pip install -r requirements.txt en el backend.",
         }
 
-    last_output = ""
     try:
-        for _ in range(2):
-            completed = subprocess.run(
-                [pdflatex, "-interaction=nonstopmode", "-halt-on-error", tex_name],
-                cwd=output_dir,
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=180,
-            )
-            last_output = (completed.stdout or "") + "\n" + (completed.stderr or "")
-            if completed.returncode != 0:
-                lines = [line.strip() for line in last_output.splitlines() if line.strip()]
-                detail = " | ".join(lines[-12:])[-2400:]
-                return {
-                    "compiled": False,
-                    "pdf": None,
-                    "compiler_found": True,
-                    "compiler_path": pdflatex,
-                    "compile_error": detail or f"pdflatex terminó con código {completed.returncode}.",
-                }
-
-        if not pdf_path.exists():
+        completed = subprocess.run(
+            [tectonic, tex_name, "--keep-logs", "--keep-intermediates"],
+            cwd=output_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=240,
+        )
+        output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+        if completed.returncode != 0 or not pdf_path.exists():
+            lines = [line.strip() for line in output.splitlines() if line.strip()]
+            detail = " | ".join(lines[-16:])[-3200:]
             return {
                 "compiled": False,
                 "pdf": None,
                 "compiler_found": True,
-                "compiler_path": pdflatex,
-                "compile_error": "pdflatex terminó sin crear el archivo PDF esperado.",
+                "compiler_path": tectonic,
+                "compile_error": detail or f"Tectonic terminó con código {completed.returncode}.",
             }
 
         return {
             "compiled": True,
             "pdf": pdf_path.name,
             "compiler_found": True,
-            "compiler_path": pdflatex,
+            "compiler_path": tectonic,
             "compile_error": None,
         }
     except subprocess.TimeoutExpired:
@@ -452,28 +385,28 @@ def _compile_latex(output_dir: Path, tex_name: str) -> dict:
             "compiled": False,
             "pdf": None,
             "compiler_found": True,
-            "compiler_path": pdflatex,
-            "compile_error": "La compilación LaTeX superó 180 segundos. MiKTeX puede estar esperando instalar un paquete faltante.",
+            "compiler_path": tectonic,
+            "compile_error": "La compilación con Tectonic superó 240 segundos. Revisa la conectividad del servidor para descargar recursos TeX en la primera ejecución.",
         }
     except Exception as exc:
         return {
             "compiled": False,
             "pdf": None,
             "compiler_found": True,
-            "compiler_path": pdflatex,
+            "compiler_path": tectonic,
             "compile_error": str(exc),
         }
 
 
 def generar_informes(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None) -> dict:
-    """Genera la fuente LaTeX y compila el PDF oficial de HydroBasin con pdflatex."""
+    """Genera la fuente LaTeX y compila el PDF oficial con Tectonic."""
     tex_name = _generar_fuente_latex(output_dir, summary, figures, subbasins=subbasins)
     compile_result = _compile_latex(output_dir, tex_name)
     return {
         "tex": tex_name,
         "pdf": compile_result["pdf"],
         "compiled": compile_result["compiled"],
-        "pdf_engine": "pdflatex",
+        "pdf_engine": "tectonic",
         "compiler_found": compile_result["compiler_found"],
         "compiler_path": compile_result["compiler_path"],
         "compile_error": compile_result["compile_error"],
