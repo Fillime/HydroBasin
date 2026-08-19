@@ -35,7 +35,7 @@ async def watershed_analysis(
     dem_path.write_bytes(await dem.read())
 
     try:
-        summary = analyze_dem(
+        result = analyze_dem(
             dem_path=dem_path,
             x=x,
             y=y,
@@ -46,4 +46,4 @@ async def watershed_analysis(
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return {"job_id": job_id, "summary": summary}
+    return {"job_id": job_id, **result}
