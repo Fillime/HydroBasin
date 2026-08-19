@@ -22,12 +22,12 @@ async def watershed_stream(
     x: float = Form(...),
     y: float = Form(...),
     point_crs: str = Form("EPSG:4326"),
-    threshold: float = Form(1000),
+    minimum_area_km2: float = Form(5.0),
 ):
     if not dem.filename or not dem.filename.lower().endswith((".tif", ".tiff")):
         raise HTTPException(status_code=400, detail="El DEM debe ser un GeoTIFF (.tif o .tiff).")
-    if threshold <= 0:
-        raise HTTPException(status_code=400, detail="El umbral debe ser mayor que cero.")
+    if minimum_area_km2 <= 0:
+        raise HTTPException(status_code=400, detail="El área mínima de aporte debe ser mayor que cero.")
 
     job_id = uuid4().hex
     job_dir = settings.workspace_dir / job_id
@@ -51,7 +51,8 @@ async def watershed_stream(
                 x=x,
                 y=y,
                 point_crs=point_crs,
-                threshold=threshold,
+                threshold=None,
+                minimum_area_km2=minimum_area_km2,
                 output_dir=output_dir,
                 progress=progress,
             )
