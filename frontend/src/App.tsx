@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Settings,
   SlidersHorizontal,
+  Terminal,
   Waves,
 } from 'lucide-react'
 import {
@@ -31,6 +32,7 @@ import {
   useMap,
   useMapEvents,
 } from 'react-leaflet'
+import ProcessLog, { type ProcessLogEntry } from './components/ProcessLog'
 
 type Summary = {
   area_km2?: number
@@ -63,6 +65,16 @@ type DemPreview = {
 type Outlet = { lat: number; lng: number }
 type ViewId = 'home' | 'analysis' | 'projects' | 'results' | 'data' | 'settings'
 type GeoJsonData = Record<string, unknown> | null
+type StreamEvent = {
+  type: 'log' | 'result' | 'error' | 'done'
+  level?: ProcessLogEntry['level']
+  message?: string
+  percent?: number
+  job_id?: string
+  summary?: Summary
+  watershed_geojson?: GeoJsonData
+  drainage_geojson?: GeoJsonData
+}
 
 function MapClickHandler({ onPick }: { onPick: (outlet: Outlet) => void }) {
   useMapEvents({ click: (event) => onPick({ lat: event.latlng.lat, lng: event.latlng.lng }) })
@@ -121,6 +133,9 @@ export default function App() {
   const [activeStep, setActiveStep] = useState(0)
   const [activeView, setActiveView] = useState<ViewId>('analysis')
   const [showInspector, setShowInspector] = useState(true)
+  const [logOpen, setLogOpen] = useState(false)
+  const [processProgress, setProcessProgress] = useState(0)
+  const [processLogs, setProcessLogs] = useState<ProcessLogEntry[]>([])
   const [layers, setLayers] = useState<Record<string, boolean>>({
     'Mapa base': true, DEM: true, Hillshade: false, 'DEM corregido': false,
     'Dirección de flujo': false, Acumulación: false, Cuenca: true,
@@ -142,7 +157,8 @@ export default function App() {
   const newProject = () => {
     setFile(null); setDemPreview(null); setOutlet({ lat: 7.06, lng: -73.85 })
     setMinimumAreaKm2('1'); setResolutionM('30'); setError(''); setActiveStep(0)
-    setActiveView('analysis'); clearResults()
+    setActiveView('analysis'); setProcessLogs([]); setProcessProgress(0); setLogOpen(false)
+    clearResults()
   }
 
   const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -183,20 +199,86 @@ export default function App() {
     body.append('point_crs', 'EPSG:4326')
     body.append('threshold', thresholdCells.toString())
 
-    setLoading(true); setError('')
+    const startedAt = performance.now()
+    const addLog = (level: ProcessLogEntry['level'], message: string) => {
+      setProcessLogs((current) => [...current, {
+        id: Date.now() + current.length,
+        level,
+        message,
+        elapsed: (performance.now() - startedAt) / 1000,
+      }])
+    }
+
+    setLoading(true)
+    setError('')
+    setLogOpen(true)
+    setProcessLogs([])
+    setProcessProgress(0)
+    clearResults()
+    addLog('info', `Preparando ${file.name} para el análisis…`)
+
     try {
-      const response = await fetch('/api/analysis/watershed', { method: 'POST', body })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail || 'No fue posible ejecutar el análisis.')
-      setSummary(data.summary)
-      setWatershedGeoJson(data.watershed_geojson ?? null)
-      setDrainageGeoJson(data.drainage_geojson ?? null)
-      setJobId(data.job_id ?? '')
-      setActiveStep(8); setActiveView('results')
-      setLayers((current) => ({ ...current, Cuenca: true, 'Red de drenaje': true }))
+      const response = await fetch('/api/analysis/watershed-stream', { method: 'POST', body })
+      if (!response.ok) {
+        const data = await response.json().catch(() => null)
+        throw new Error(data?.detail || 'No fue posible iniciar el análisis.')
+      }
+      if (!response.body) throw new Error('El servidor no devolvió un flujo de progreso.')
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let streamError = ''
+      let resultReceived = false
+
+      while (true) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+          const item = JSON.parse(line) as StreamEvent
+
+          if (item.type === 'log' && item.message) {
+            addLog(item.level || 'info', item.message)
+            if (typeof item.percent === 'number') setProcessProgress(item.percent)
+          }
+
+          if (item.type === 'error') {
+            streamError = item.message || 'Error durante el procesamiento.'
+            addLog('error', streamError)
+            setProcessProgress(item.percent ?? 100)
+          }
+
+          if (item.type === 'result') {
+            resultReceived = true
+            setSummary(item.summary ?? null)
+            setWatershedGeoJson(item.watershed_geojson ?? null)
+            setDrainageGeoJson(item.drainage_geojson ?? null)
+            setJobId(item.job_id ?? '')
+            setLayers((current) => ({ ...current, Cuenca: true, 'Red de drenaje': true }))
+          }
+        }
+        if (done) break
+      }
+
+      if (streamError) throw new Error(streamError)
+      if (!resultReceived) throw new Error('El procesamiento terminó sin devolver resultados.')
+
+      setProcessProgress(100)
+      setActiveStep(8)
+      setActiveView('results')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error inesperado.')
-    } finally { setLoading(false) }
+      const message = err instanceof Error ? err.message : 'Error inesperado.'
+      setError(message)
+      setProcessLogs((current) => current.some((item) => item.level === 'error' && item.message === message)
+        ? current
+        : [...current, { id: Date.now(), level: 'error', message, elapsed: (performance.now() - startedAt) / 1000 }])
+    } finally {
+      setLoading(false)
+    }
   }
 
   const resultMetrics = summary ? (
@@ -345,7 +427,14 @@ export default function App() {
       </aside>
 
       <main className="workspace-shell">
-        <header className="topbar"><div className="breadcrumbs"><span>HydroBasin</span><ChevronRight size={12} /><strong>{viewLabels[activeView]}</strong></div><div className="topbar-actions"><span className="engine-status"><i /> Motor listo</span><button className="secondary-button" onClick={() => setShowInspector((value) => !value)}><SlidersHorizontal size={14} /> {showInspector ? 'Ocultar panel' : 'Mostrar panel'}</button></div></header>
+        <header className="topbar">
+          <div className="breadcrumbs"><span>HydroBasin</span><ChevronRight size={12} /><strong>{viewLabels[activeView]}</strong></div>
+          <div className="topbar-actions">
+            <span className="engine-status"><i /> {loading ? `Procesando · ${Math.round(processProgress)}%` : 'Motor listo'}</span>
+            <button className="secondary-button" onClick={() => setLogOpen((value) => !value)}><Terminal size={14} /> Registro</button>
+            <button className="secondary-button" onClick={() => setShowInspector((value) => !value)}><SlidersHorizontal size={14} /> {showInspector ? 'Ocultar panel' : 'Mostrar panel'}</button>
+          </div>
+        </header>
         <div className="workspace-grid">
           <section className="map-workspace">
             <div className="map-toolbar"><div><MapIcon size={14} /><strong>Vista geográfica</strong></div><span>{demPreview ? `DEM: ${demPreview.filename}` : 'Carga un GeoTIFF para ver su extensión'}</span></div>
@@ -361,6 +450,14 @@ export default function App() {
               <ScaleControl position="bottomleft" imperial={false} />
             </MapContainer>
             <div className="map-readout"><span>{demPreview ? 'Exutorio · dentro del DEM' : 'Exutorio'}</span><strong>{outlet.lat.toFixed(5)}, {outlet.lng.toFixed(5)}</strong></div>
+            <ProcessLog
+              open={logOpen}
+              running={loading}
+              progress={processProgress}
+              entries={processLogs}
+              onClose={() => setLogOpen(false)}
+              onClear={() => { if (!loading) { setProcessLogs([]); setProcessProgress(0) } }}
+            />
           </section>
           {showInspector && <aside className="inspector">{renderInspector()}</aside>}
         </div>
