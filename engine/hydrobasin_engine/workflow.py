@@ -161,15 +161,15 @@ def run_watershed_analysis(
     )
     report("ok", "Cartografía de DEM, relieve, acumulación, drenaje, Strahler y subcuencas generada.", 96)
 
-    report("info", "Generando fuente LaTeX y compilando el informe PDF…", 97)
+    report("info", "Generando fuente LaTeX y compilando el PDF con Tectonic…", 97)
     report_files = generar_informes(output_dir, summary, figures, subbasins=subbasins)
     if report_files.get("compiled"):
-        report("ok", "Informe PDF compilado correctamente desde LaTeX.", 99)
+        report("ok", "Informe PDF compilado correctamente desde LaTeX con Tectonic.", 99)
     elif report_files.get("compiler_found"):
         detail = report_files.get("compile_error") or "Error de compilación no especificado."
-        report("warning", f"La fuente .tex fue generada, pero pdflatex no pudo compilar el PDF: {detail}", 99)
+        report("warning", f"La fuente .tex fue generada, pero Tectonic no pudo compilar el PDF: {detail}", 99)
     else:
-        report("warning", "La fuente .tex fue generada, pero HydroBasin no encontró pdflatex para compilar el PDF.", 99)
+        report("warning", "La fuente .tex fue generada, pero Tectonic no está disponible en el entorno del backend. Reinstala requirements.txt.", 99)
 
     result = {
         "summary": summary,
