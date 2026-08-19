@@ -11,7 +11,7 @@ from .delineation import ajustar_punto_salida, delimitar_cuenca, transformar_pun
 from .hydrology import acumulacion_flujo, direccion_flujo, orden_strahler
 from .io import guardar_raster, guardar_vector, mascara_a_poligono
 from .morphometry import parametros_morfometricos
-from .report import generar_figuras, generar_informe_latex
+from .report import generar_figuras, generar_informes
 from .streams import extraer_red_vectorial
 
 ProgressCallback = Callable[[str, str, int], None]
@@ -141,22 +141,16 @@ def run_watershed_analysis(
     )
     report("ok", "DEM, hillshade, acumulación, cuenca y Strahler exportados como figuras.", 96)
 
-    report("info", "Generando informe técnico en LaTeX…", 97)
-    latex_report = generar_informe_latex(output_dir, summary, figures)
-    if latex_report["compiled"]:
-        report("ok", f"Informe LaTeX compilado en PDF con {latex_report.get('compiler_path') or 'pdflatex'}.", 99)
-    elif latex_report.get("compiler_found"):
-        detail = latex_report.get("compile_error") or "La compilación terminó con error desconocido."
-        report("warning", f"pdflatex fue encontrado, pero la compilación falló: {detail}", 99)
-    else:
-        report("warning", "Informe .tex generado, pero HydroBasin no pudo localizar pdflatex en el PATH ni en las rutas habituales de MiKTeX.", 99)
+    report("info", "Generando informe técnico en PDF…", 97)
+    report_files = generar_informes(output_dir, summary, figures)
+    report("ok", "Informe PDF generado directamente. Fuente LaTeX disponible como exportación opcional.", 99)
 
     result = {
         "summary": summary,
         "watershed_geojson": _geojson_web(watershed),
         "drainage_geojson": _geojson_web(drainage),
         "figures": figures,
-        "report": latex_report,
+        "report": report_files,
     }
     (output_dir / "resumen.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     report("ok", "Análisis completado. Resultados, diagramas e informe listos.", 100)
