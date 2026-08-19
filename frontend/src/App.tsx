@@ -34,6 +34,7 @@ import {
   useMap,
   useMapEvents,
 } from 'react-leaflet'
+import DemAreaSelection, { type DemBounds } from './components/DemAreaSelection'
 import ProcessLog, { type ProcessLogEntry } from './components/ProcessLog'
 
 type Summary = {
@@ -46,6 +47,7 @@ type Summary = {
   strahler_max?: number
   subbasin_count?: number
   metric_resolution_m?: [number, number] | null
+  dem_source?: string
   crs_dem?: string
   crs_calculo?: string
   dem_width?: number
@@ -74,6 +76,24 @@ type DemPreview = {
   preview_data_url: string
 }
 
+type DemSource = {
+  id: string
+  name: string
+  resolution_m: number
+  coverage: string
+  kind: string
+  note: string
+  recommended: boolean
+  estimated_cells: number
+}
+
+type DemCatalog = {
+  area_km2: number
+  recommended_source: string
+  sources: DemSource[]
+  api_configured: boolean
+}
+
 type Outlet = { lat: number; lng: number }
 type ViewId = 'home' | 'analysis' | 'projects' | 'results' | 'data' | 'settings'
 type GeoJsonData = Record<string, unknown> | null
@@ -90,8 +110,8 @@ type StreamEvent = {
   report?: ReportInfo
 }
 
-function MapClickHandler({ onPick }: { onPick: (outlet: Outlet) => void }) {
-  useMapEvents({ click: (event) => onPick({ lat: event.latlng.lat, lng: event.latlng.lng }) })
+function MapClickHandler({ onPick, enabled = true }: { onPick: (outlet: Outlet) => void; enabled?: boolean }) {
+  useMapEvents({ click: (event) => { if (enabled) onPick({ lat: event.latlng.lat, lng: event.latlng.lng }) } })
   return null
 }
 
@@ -151,6 +171,14 @@ export default function App() {
   const [logOpen, setLogOpen] = useState(false)
   const [processProgress, setProcessProgress] = useState(0)
   const [processLogs, setProcessLogs] = useState<ProcessLogEntry[]>([])
+  const [aoiBounds, setAoiBounds] = useState<DemBounds | null>(null)
+  const [selectingDemArea, setSelectingDemArea] = useState(false)
+  const [demSources, setDemSources] = useState<DemSource[]>([])
+  const [selectedDemSource, setSelectedDemSource] = useState('COP30')
+  const [demAreaKm2, setDemAreaKm2] = useState<number | null>(null)
+  const [demApiConfigured, setDemApiConfigured] = useState<boolean | null>(null)
+  const [demDownloading, setDemDownloading] = useState(false)
+  const [demSourceLabel, setDemSourceLabel] = useState('GeoTIFF cargado por el usuario')
   const [layers, setLayers] = useState<Record<string, boolean>>({
     'Mapa base': true, DEM: true, Hillshade: false, 'DEM corregido': false,
     'Dirección de flujo': false, Acumulación: false, Cuenca: true, Subcuencas: true,
@@ -158,6 +186,7 @@ export default function App() {
   })
 
   const fileSize = useMemo(() => file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : '', [file])
+  const selectedSource = useMemo(() => demSources.find((source) => source.id === selectedDemSource) ?? null, [demSources, selectedDemSource])
 
   const clearResults = () => {
     setSummary(null); setReportInfo(null); setWatershedGeoJson(null); setDrainageGeoJson(null); setSubbasinsGeoJson(null); setJobId('')
@@ -167,14 +196,14 @@ export default function App() {
     setFile(null); setDemPreview(null); setOutlet({ lat: 7.06, lng: -73.85 })
     setMinimumAreaKm2('5'); setError(''); setActiveStep(0)
     setActiveView('analysis'); setProcessLogs([]); setProcessProgress(0); setLogOpen(false)
+    setAoiBounds(null); setSelectingDemArea(false); setDemSources([]); setDemAreaKm2(null); setDemApiConfigured(null)
+    setSelectedDemSource('COP30'); setDemSourceLabel('GeoTIFF cargado por el usuario')
     clearResults()
   }
 
-  const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const selected = event.target.files?.[0] ?? null
-    setFile(selected); setDemPreview(null); setError(''); clearResults(); setActiveStep(selected ? 1 : 0); setActiveView('analysis')
-    if (!selected) return
-
+  const inspectDemFile = async (selected: File, sourceLabel: string) => {
+    setFile(selected); setDemPreview(null); setError(''); clearResults(); setActiveStep(1); setActiveView('analysis')
+    setDemSourceLabel(sourceLabel)
     setPreviewLoading(true)
     try {
       const body = new FormData()
@@ -193,13 +222,67 @@ export default function App() {
     }
   }
 
+  const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0] ?? null
+    if (!selected) return
+    await inspectDemFile(selected, 'GeoTIFF cargado por el usuario')
+  }
+
+  const loadDemCatalog = async (bounds: DemBounds) => {
+    setError('')
+    try {
+      const params = new URLSearchParams({
+        south: String(bounds.south), north: String(bounds.north), west: String(bounds.west), east: String(bounds.east),
+      })
+      const response = await fetch(`/api/analysis/dem-sources?${params.toString()}`)
+      const data = await response.json() as DemCatalog & { detail?: string }
+      if (!response.ok) throw new Error(data.detail || 'No fue posible consultar las fuentes DEM.')
+      setDemSources(data.sources)
+      setSelectedDemSource(data.recommended_source)
+      setDemAreaKm2(data.area_km2)
+      setDemApiConfigured(data.api_configured)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible consultar las fuentes DEM.')
+    }
+  }
+
+  const onDemAreaSelected = (bounds: DemBounds) => {
+    setAoiBounds(bounds)
+    setSelectingDemArea(false)
+    void loadDemCatalog(bounds)
+  }
+
+  const downloadRecommendedDem = async () => {
+    if (!aoiBounds || !selectedDemSource) return
+    setDemDownloading(true); setError('')
+    try {
+      const params = new URLSearchParams({
+        source: selectedDemSource,
+        south: String(aoiBounds.south), north: String(aoiBounds.north), west: String(aoiBounds.west), east: String(aoiBounds.east),
+      })
+      const response = await fetch(`/api/analysis/dem-download?${params.toString()}`)
+      if (!response.ok) {
+        const data = await response.json().catch(() => null)
+        throw new Error(data?.detail || 'No fue posible descargar el DEM desde OpenTopography.')
+      }
+      const blob = await response.blob()
+      const source = demSources.find((item) => item.id === selectedDemSource)
+      const downloaded = new File([blob], `hydrobasin_${selectedDemSource.toLowerCase()}.tif`, { type: 'image/tiff' })
+      await inspectDemFile(downloaded, `${source?.name || selectedDemSource} · OpenTopography`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible descargar el DEM.')
+    } finally {
+      setDemDownloading(false)
+    }
+  }
+
   const pickOutlet = (point: Outlet) => {
     setOutlet(point); setActiveStep(5); setError(''); clearResults()
   }
 
   const runAnalysis = async (event: FormEvent) => {
     event.preventDefault()
-    if (!file) { setError('Carga primero un DEM GeoTIFF.'); return }
+    if (!file) { setError('Carga o descarga primero un DEM GeoTIFF.'); return }
     const area = Number(minimumAreaKm2)
     if (!Number.isFinite(area) || area <= 0) { setError('El área mínima de aporte debe ser mayor que cero.'); return }
 
@@ -209,6 +292,7 @@ export default function App() {
     body.append('y', outlet.lat.toString())
     body.append('point_crs', 'EPSG:4326')
     body.append('minimum_area_km2', area.toString())
+    body.append('dem_source', demSourceLabel)
 
     const startedAt = performance.now()
     const addLog = (level: ProcessLogEntry['level'], message: string) => {
@@ -301,6 +385,7 @@ export default function App() {
 
   const resultMetrics = summary ? (
     <div className="metrics-list">
+      <div><span>Fuente DEM</span><strong>{summary.dem_source || '—'}</strong></div>
       <div><span>Área</span><strong>{summary.area_km2?.toFixed(2)} km²</strong></div>
       <div><span>Perímetro</span><strong>{summary.perimetro_km?.toFixed(2)} km</strong></div>
       <div><span>Compacidad</span><strong>{summary.coeficiente_compacidad?.toFixed(3)}</strong></div>
@@ -316,6 +401,7 @@ export default function App() {
 
   const demInfo = demPreview ? (
     <div className="metrics-list">
+      <div><span>Fuente</span><strong>{demSourceLabel}</strong></div>
       <div><span>CRS</span><strong>{demPreview.crs}</strong></div>
       <div><span>Dimensiones</span><strong>{demPreview.width} × {demPreview.height}</strong></div>
       <div><span>Resolución nativa</span><strong>{demPreview.resolution[0].toFixed(5)} × {demPreview.resolution[1].toFixed(5)}</strong></div>
@@ -335,16 +421,43 @@ export default function App() {
     </>
   )
 
+  const demSourceControl = (
+    <section className="form-section">
+      <div className="form-section-heading"><strong>Área de estudio</strong><span>OpenTopography</span></div>
+      <button type="button" className={`secondary-button wide ${selectingDemArea ? 'active' : ''}`} onClick={() => { setSelectingDemArea(true); setAoiBounds(null); setDemSources([]); setDemAreaKm2(null); setError('') }}>
+        <MapIcon size={14} /> {selectingDemArea ? 'Marca dos esquinas en el mapa…' : 'Seleccionar área en el mapa'}
+      </button>
+      {aoiBounds && <div className="metrics-list">
+        <div><span>Área aproximada</span><strong>{demAreaKm2 != null ? `${demAreaKm2.toLocaleString(undefined, { maximumFractionDigits: 1 })} km²` : 'Calculando…'}</strong></div>
+        <div><span>Extensión</span><strong>{aoiBounds.west.toFixed(3)}, {aoiBounds.south.toFixed(3)} → {aoiBounds.east.toFixed(3)}, {aoiBounds.north.toFixed(3)}</strong></div>
+      </div>}
+      {demSources.length > 0 && <>
+        <label className="field">Fuente DEM
+          <select value={selectedDemSource} onChange={(e) => setSelectedDemSource(e.target.value)}>
+            {demSources.map((source) => <option key={source.id} value={source.id}>{source.recommended ? '★ ' : ''}{source.name} · {source.resolution_m} m</option>)}
+          </select>
+        </label>
+        {selectedSource && <p className="helper"><strong>{selectedSource.recommended ? 'Recomendado. ' : ''}</strong>{selectedSource.note} Estimación: {selectedSource.estimated_cells.toLocaleString()} celdas para el área seleccionada.</p>}
+        {demApiConfigured === false && <div className="error-box">OpenTopography todavía no tiene una API key configurada en el backend.</div>}
+        <button type="button" className="primary-button wide" disabled={demDownloading || demApiConfigured === false} onClick={downloadRecommendedDem}><Download size={14} /> {demDownloading ? 'Descargando DEM…' : 'Descargar y usar DEM'}</button>
+      </>}
+      <p className="helper">HydroBasin recomienda la fuente con mejor resolución y prioridad hidrológica disponible, pero puedes cambiarla antes de descargar.</p>
+    </section>
+  )
+
   const reportDownloads = jobId && reportInfo ? (
     <section className="form-section">
-      <div className="form-section-heading"><strong>Informe y cartografía</strong><span>PDF · LaTeX opcional · 220 DPI</span></div>
+      <div className="form-section-heading"><strong>Informe y cartografía</strong><span>PDF · LaTeX · GIS</span></div>
       <div className="download-list">
         {reportInfo.pdf && <button type="button" className="secondary-button wide" onClick={() => downloadArtifact(reportInfo.pdf!)}><Download size={14} /> Descargar informe PDF</button>}
         {reportInfo.tex && <button type="button" className="secondary-button wide" onClick={() => downloadArtifact(reportInfo.tex!)}><FileText size={14} /> Descargar fuente LaTeX</button>}
         <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/04_cuenca_drenaje.png')}><Download size={14} /> Cuenca + drenajes</button>
         <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/03_acumulacion_cuenca.png')}><Download size={14} /> Acumulación de flujo</button>
         <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/05_strahler_cuenca.png')}><Download size={14} /> Orden Strahler</button>
+        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('cuenca_shp.zip')}><Download size={14} /> Cuenca Shapefile (.zip)</button>
+        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('red_drenaje_shp.zip')}><Download size={14} /> Drenajes Shapefile (.zip)</button>
         {summary?.subbasin_count ? <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/06_subcuencas.png')}><Download size={14} /> Mapa de subcuencas</button> : null}
+        {summary?.subbasin_count ? <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('subcuencas_shp.zip')}><Download size={14} /> Subcuencas Shapefile (.zip)</button> : null}
         {summary?.subbasin_count ? <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('subcuencas.gpkg')}><Download size={14} /> Subcuencas GeoPackage</button> : null}
       </div>
     </section>
@@ -354,7 +467,7 @@ export default function App() {
     if (activeView === 'home') return (
       <div className="inspector-content">
         <div className="inspector-header"><span className="section-label">HYDROBASIN</span><h1>Inicio</h1><p>Workspace de delimitación y análisis de cuencas.</p></div>
-        <section className="form-section"><div className="instruction-list"><span>1. Carga un DEM GeoTIFF.</span><span>2. Verifica su extensión en el mapa.</span><span>3. Marca el exutorio y ejecuta el análisis.</span></div></section>
+        <section className="form-section"><div className="instruction-list"><span>1. Dibuja un área y descarga un DEM, o sube tu GeoTIFF.</span><span>2. Verifica su extensión.</span><span>3. Marca el exutorio y ejecuta el análisis.</span></div></section>
         <div className="run-area"><button className="primary-button" onClick={() => setActiveView('analysis')}><Play size={14} /> Abrir análisis</button></div>
       </div>
     )
@@ -379,7 +492,7 @@ export default function App() {
     if (activeView === 'data') return (
       <div className="inspector-content">
         <div className="inspector-header"><span className="section-label">DATOS</span><h1>Entradas y capas</h1><p>Información disponible para el proyecto actual.</p></div>
-        <section className="form-section">{demInfo || <div className="empty-state"><Mountain size={18} /><span>Carga un DEM para ver sus metadatos.</span></div>}</section>
+        <section className="form-section">{demInfo || <div className="empty-state"><Mountain size={18} /><span>Carga o descarga un DEM para ver sus metadatos.</span></div>}</section>
       </div>
     )
 
@@ -394,15 +507,17 @@ export default function App() {
     return (
       <>
         <form onSubmit={runAnalysis}>
-          <div className="inspector-header"><span className="section-label">ENTRADA</span><h1>Delimitación de cuenca</h1><p>Carga el DEM, comprueba dónde está y selecciona el punto de salida.</p></div>
+          <div className="inspector-header"><span className="section-label">ENTRADA</span><h1>Delimitación de cuenca</h1><p>Obtén un DEM abierto desde el mapa o carga tu propio GeoTIFF.</p></div>
+          {demSourceControl}
           <section className="form-section">
+            <div className="form-section-heading"><strong>DEM propio</strong><span>Alternativa</span></div>
             <label className={`upload-row ${file ? 'ready' : ''}`}>
               <input type="file" accept=".tif,.tiff" onChange={onFile} />
               <FileUp size={16} />
               <div><strong>{file?.name || 'Seleccionar GeoTIFF'}</strong><span>{previewLoading ? 'Leyendo extensión…' : file ? fileSize : '.tif o .tiff'}</span></div>
             </label>
           </section>
-          {demPreview && <section className="form-section"><div className="form-section-heading"><strong>Extensión del DEM</strong><span>{demPreview.crs}</span></div>{demInfo}<p className="helper">El mapa ya hizo zoom a esta extensión. La imagen gris corresponde a las elevaciones del DEM.</p></section>}
+          {demPreview && <section className="form-section"><div className="form-section-heading"><strong>DEM activo</strong><span>{demPreview.crs}</span></div>{demInfo}<p className="helper">Este DEM será utilizado por el motor hidrológico y su fuente quedará registrada en los resultados.</p></section>}
           <section className="form-section">
             <div className="form-section-heading"><strong>Exutorio</strong><span>EPSG:4326</span></div>
             <div className="field-grid">
@@ -416,7 +531,7 @@ export default function App() {
             {drainageControl}
           </section>
           {error && <div className="error-box">{error}</div>}
-          <div className="run-area"><button className="primary-button" disabled={loading || previewLoading}><Play size={14} fill="currentColor" /> {loading ? 'Procesando…' : 'Ejecutar análisis'}</button></div>
+          <div className="run-area"><button className="primary-button" disabled={loading || previewLoading || demDownloading}><Play size={14} fill="currentColor" /> {loading ? 'Procesando…' : 'Ejecutar análisis'}</button></div>
         </form>
         <section className="results-section"><div className="form-section-heading"><strong>Resultados</strong><span>{summary ? 'Calculados' : 'Pendientes'}</span></div>{resultMetrics}</section>
         {reportDownloads}
@@ -473,17 +588,18 @@ export default function App() {
         <header className="topbar">
           <div className="breadcrumbs"><span>HydroBasin</span><ChevronRight size={12} /><strong>{viewLabels[activeView]}</strong></div>
           <div className="topbar-actions">
-            <span className="engine-status"><i /> {loading ? `Procesando · ${Math.round(processProgress)}%` : 'Motor listo'}</span>
+            <span className="engine-status"><i /> {loading ? `Procesando · ${Math.round(processProgress)}%` : demDownloading ? 'Descargando DEM…' : 'Motor listo'}</span>
             <button className="secondary-button" onClick={() => setLogOpen((value) => !value)}><Terminal size={14} /> Registro</button>
             <button className="secondary-button" onClick={() => setShowInspector((value) => !value)}><SlidersHorizontal size={14} /> {showInspector ? 'Ocultar panel' : 'Mostrar panel'}</button>
           </div>
         </header>
         <div className="workspace-grid">
           <section className="map-workspace">
-            <div className="map-toolbar"><div><MapIcon size={14} /><strong>Vista geográfica</strong></div><span>{demPreview ? `DEM: ${demPreview.filename}` : 'Carga un GeoTIFF para ver su extensión'}</span></div>
+            <div className="map-toolbar"><div><MapIcon size={14} /><strong>Vista geográfica</strong></div><span>{selectingDemArea ? 'Selecciona dos esquinas del área para obtener un DEM' : demPreview ? `DEM: ${demPreview.filename}` : 'Selecciona un área o carga un GeoTIFF'}</span></div>
             <MapContainer center={[outlet.lat, outlet.lng]} zoom={11} className="map-canvas" zoomControl>
               {layers['Mapa base'] && <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />}
-              <MapClickHandler onPick={pickOutlet} />
+              <MapClickHandler onPick={pickOutlet} enabled={!selectingDemArea} />
+              <DemAreaSelection active={selectingDemArea} bounds={aoiBounds} onBoundsChange={onDemAreaSelected} />
               {demPreview && layers.DEM && demBounds && <ImageOverlay url={demPreview.preview_data_url} bounds={demBounds} opacity={0.62} />}
               {demPreview && <FitToDem preview={demPreview} />}
               {layers.Subcuencas && subbasinsGeoJson && <GeoJSON key={`subbasins-${jobId}`} data={subbasinsGeoJson as any} style={{ color: '#d8e4e4', weight: 1, fillColor: '#1f9d8f', fillOpacity: 0.13 }} />}
@@ -493,7 +609,7 @@ export default function App() {
               {watershedGeoJson && <FitToGeoJson data={watershedGeoJson} />}
               <ScaleControl position="bottomleft" imperial={false} />
             </MapContainer>
-            <div className="map-readout"><span>{demPreview ? 'Exutorio · dentro del DEM' : 'Exutorio'}</span><strong>{outlet.lat.toFixed(5)}, {outlet.lng.toFixed(5)}</strong></div>
+            <div className="map-readout"><span>{selectingDemArea ? 'Modo selección de DEM' : demPreview ? 'Exutorio · dentro del DEM' : 'Exutorio'}</span><strong>{outlet.lat.toFixed(5)}, {outlet.lng.toFixed(5)}</strong></div>
             <ProcessLog
               open={logOpen}
               running={loading}
