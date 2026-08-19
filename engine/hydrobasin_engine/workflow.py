@@ -144,9 +144,12 @@ def run_watershed_analysis(
     report("info", "Generando informe técnico en LaTeX…", 97)
     latex_report = generar_informe_latex(output_dir, summary, figures)
     if latex_report["compiled"]:
-        report("ok", "Informe LaTeX compilado también en PDF.", 99)
+        report("ok", f"Informe LaTeX compilado en PDF con {latex_report.get('compiler_path') or 'pdflatex'}.", 99)
+    elif latex_report.get("compiler_found"):
+        detail = latex_report.get("compile_error") or "La compilación terminó con error desconocido."
+        report("warning", f"pdflatex fue encontrado, pero la compilación falló: {detail}", 99)
     else:
-        report("warning", "Informe .tex generado. PDF no compilado porque pdflatex no está instalado en el servidor.", 99)
+        report("warning", "Informe .tex generado, pero HydroBasin no pudo localizar pdflatex en el PATH ni en las rutas habituales de MiKTeX.", 99)
 
     result = {
         "summary": summary,
