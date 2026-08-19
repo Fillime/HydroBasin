@@ -13,6 +13,13 @@ def _extent(grid):
     return grid.extent
 
 
+def _sample(array, max_dim: int = 1200):
+    data = np.asarray(array)
+    rows, cols = data.shape[-2], data.shape[-1]
+    step = max(1, int(np.ceil(max(rows, cols) / max_dim)))
+    return data[::step, ::step]
+
+
 def _save(fig, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=200, bbox_inches="tight")
@@ -34,15 +41,16 @@ def generar_figuras(
     figures_dir.mkdir(parents=True, exist_ok=True)
     extent = _extent(grid)
 
+    dem_plot = _sample(dem)
     fig, ax = plt.subplots(figsize=(8, 6))
-    im = ax.imshow(np.asarray(dem), extent=extent, cmap="terrain")
+    im = ax.imshow(dem_plot, extent=extent, cmap="terrain")
     fig.colorbar(im, ax=ax, label="Elevación")
     ax.set_title("Modelo digital de elevación")
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     _save(fig, figures_dir / "01_dem.png")
 
-    arr = np.asarray(corrected_dem, dtype=float)
+    arr = _sample(corrected_dem).astype("float32", copy=False)
     gy, gx = np.gradient(arr)
     slope = np.pi / 2.0 - np.arctan(np.sqrt(gx * gx + gy * gy))
     aspect = np.arctan2(-gx, gy)
@@ -57,7 +65,7 @@ def generar_figuras(
     ax.set_ylabel("Y")
     _save(fig, figures_dir / "02_hillshade.png")
 
-    acc = np.asarray(accumulation, dtype=float)
+    acc = _sample(accumulation).astype("float32", copy=False)
     positive = acc[acc > 0]
     vmax = float(positive.max()) if positive.size else 1.0
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -78,7 +86,7 @@ def generar_figuras(
     ax.set_ylabel("Y")
     _save(fig, figures_dir / "04_cuenca_drenaje.png")
 
-    order = np.asarray(stream_order, dtype=float)
+    order = _sample(stream_order).astype("float32", copy=False)
     fig, ax = plt.subplots(figsize=(8, 6))
     masked = np.where(order > 0, order, np.nan)
     im = ax.imshow(masked, extent=extent, cmap="viridis")
