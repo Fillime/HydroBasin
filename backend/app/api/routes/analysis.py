@@ -6,12 +6,14 @@ from uuid import uuid4
 
 import numpy as np
 import rasterio
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from rasterio.io import MemoryFile
 from rasterio.warp import transform_bounds
 
 from app.core.config import settings
 from app.services.hydro_service import analyze_dem
+from app.services.opentopography_service import download_dem, list_sources
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -19,6 +21,53 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 def _validate_dem(dem: UploadFile) -> None:
     if not dem.filename or not dem.filename.lower().endswith((".tif", ".tiff")):
         raise HTTPException(status_code=400, detail="El DEM debe ser un GeoTIFF (.tif o .tiff).")
+
+
+@router.get("/dem-sources")
+async def dem_sources(
+    south: float = Query(...),
+    north: float = Query(...),
+    west: float = Query(...),
+    east: float = Query(...),
+):
+    try:
+        return list_sources(south, north, west, east)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/dem-download")
+async def dem_download(
+    source: str = Query("COP30"),
+    south: float = Query(...),
+    north: float = Query(...),
+    west: float = Query(...),
+    east: float = Query(...),
+):
+    download_id = uuid4().hex
+    target_dir = settings.workspace_dir / "dem_downloads" / download_id
+    target = target_dir / f"hydrobasin_{source.lower()}_{download_id[:8]}.tif"
+    try:
+        await download_dem(
+            source=source,
+            south=south,
+            north=north,
+            west=west,
+            east=east,
+            destination=target,
+        )
+        with rasterio.open(target) as src:
+            if src.crs is None or src.width <= 0 or src.height <= 0:
+                raise ValueError("OpenTopography devolvió un GeoTIFF inválido.")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return FileResponse(
+        target,
+        media_type="image/tiff",
+        filename=target.name,
+        headers={"X-HydroBasin-Dem-Source": source},
+    )
 
 
 @router.post("/dem-preview")
