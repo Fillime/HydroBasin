@@ -1,32 +1,14 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import cm
-from reportlab.platypus import (
-    Image,
-    KeepTogether,
-    PageBreak,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
-
-ACCENT = colors.HexColor("#1f5f66")
-TEXT = colors.HexColor("#202529")
-MUTED = colors.HexColor("#68727a")
-RULE = colors.HexColor("#d8dde0")
-SOFT = colors.HexColor("#f5f7f8")
 
 
 def _extent(grid):
@@ -177,280 +159,322 @@ def _n(value, digits=2):
     return "N/D" if value is None else f"{value:.{digits}f}"
 
 
-def _generar_fuente_latex(output_dir: Path, summary: dict, figures: dict[str, str]) -> str:
+def _latex_escape(value) -> str:
+    text = str(value)
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    return "".join(replacements.get(ch, ch) for ch in text)
+
+
+def _find_pdflatex() -> str | None:
+    found = shutil.which("pdflatex")
+    if found:
+        return found
+
+    candidates: list[Path] = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    program_files = os.environ.get("ProgramFiles")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+
+    if local_app_data:
+        root = Path(local_app_data)
+        candidates.extend([
+            root / "Programs" / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe",
+            root / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe",
+        ])
+    if program_files:
+        candidates.append(Path(program_files) / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe")
+    if program_files_x86:
+        candidates.append(Path(program_files_x86) / "MiKTeX" / "miktex" / "bin" / "pdflatex.exe")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _subbasin_table_rows(subbasins) -> str:
+    if subbasins is None or subbasins.empty or "area_km2" not in subbasins.columns:
+        return ""
+    top = subbasins.sort_values("area_km2", ascending=False).head(12)
+    rows = []
+    for _, row in top.iterrows():
+        rows.append(f"{int(row['subbasin_id'])} & {_n(float(row['area_km2']), 2)} \\\\")
+    return "\n".join(rows)
+
+
+def _generar_fuente_latex(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None) -> str:
     tex_path = output_dir / "informe_hydrobasin.tex"
+    resolution = summary.get("metric_resolution_m")
+    resolution_text = "N/D" if not resolution else f"{resolution[0]:.1f} × {resolution[1]:.1f} m"
+    outlet = summary.get("outlet_original", {})
+    outlet_text = f"{outlet.get('y', 'N/D')}, {outlet.get('x', 'N/D')}"
+    generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
+
     subfigure = ""
+    subtable = ""
     if figures.get("subbasins"):
         subfigure = rf"""
 \begin{{figure}}[H]
 \centering
-\includegraphics[width=0.92\textwidth]{{{figures['subbasins']}}}
-\caption{{Subcuencas hidrológicas dentro de la cuenca principal.}}
+\includegraphics[width=0.94\textwidth]{{{figures['subbasins']}}}
+\caption{{Subcuencas hidrológicas derivadas de la red D8 dentro de la cuenca principal.}}
+\label{{fig:subcuencas}}
 \end{{figure}}
+"""
+        rows = _subbasin_table_rows(subbasins)
+        if rows:
+            subtable = rf"""
+\subsection{{Subcuencas de mayor extensión}}
+\begin{{table}}[H]
+\centering
+\begin{{tabular}}{{rr}}
+\toprule
+\textbf{{ID}} & \textbf{{Área (km$^2$)}} \\
+\midrule
+{rows}
+\bottomrule
+\end{{tabular}}
+\caption{{Subcuencas de mayor extensión derivadas del DEM.}}
+\end{{table}}
 """
 
     tex = rf"""\documentclass[11pt,a4paper]{{article}}
 \usepackage[utf8]{{inputenc}}
 \usepackage[T1]{{fontenc}}
-\usepackage[spanish]{{babel}}
+\usepackage[spanish,es-nodecimaldot]{{babel}}
 \usepackage{{graphicx}}
 \usepackage{{booktabs}}
+\usepackage{{array}}
 \usepackage{{geometry}}
 \usepackage{{float}}
 \usepackage{{microtype}}
 \usepackage{{fancyhdr}}
-\geometry{{margin=2.5cm}}
+\usepackage{{xcolor}}
+\usepackage{{caption}}
+\usepackage{{hyperref}}
+\usepackage{{lastpage}}
+\geometry{{top=2.2cm,bottom=2.1cm,left=2.5cm,right=2.5cm}}
+\definecolor{{hydro}}{{HTML}}{{1F5F66}}
+\definecolor{{hydrogray}}{{HTML}}{{5F6B72}}
+\hypersetup{{colorlinks=true,linkcolor=hydro,urlcolor=hydro,pdfauthor={{HydroBasin Watershed Studio}},pdftitle={{Informe de delimitación y análisis de cuenca hidrográfica}}}}
+\captionsetup{{font=small,labelfont=bf,labelsep=period}}
+\setlength{{\parindent}}{{0pt}}
+\setlength{{\parskip}}{{0.45em}}
 \pagestyle{{fancy}}
 \fancyhf{{}}
-\lhead{{HydroBasin}}
-\rhead{{Análisis de cuenca}}
-\cfoot{{\thepage}}
-\title{{\textbf{{Informe de delimitación y análisis de cuenca hidrográfica}}}}
-\author{{HydroBasin Watershed Studio}}
-\date{{\today}}
+\lhead{{\small\textsc{{HydroBasin}}}}
+\rhead{{\small Informe hidrográfico}}
+\cfoot{{\small Página \thepage\ de \pageref{{LastPage}}}}
+\renewcommand{{\headrulewidth}}{{0.4pt}}
+
 \begin{{document}}
-\maketitle
+
+\begin{{titlepage}}
+\thispagestyle{{empty}}
+\vspace*{{1.4cm}}
+{{\color{{hydro}}\Large\textbf{{HYDROBASIN}}}}\\[0.35cm]
+{{\large Watershed Studio}}\\[2.0cm]
+{{\Huge\bfseries Informe de delimitación y análisis de cuenca hidrográfica}}\\[0.7cm]
+{{\large Caracterización morfométrica, red de drenaje, orden de Strahler y subcuencas}}\\[1.4cm]
+\rule{{\textwidth}}{{0.8pt}}\\[0.8cm]
+\begin{{tabular}}{{@{{}}p{{5.3cm}}p{{9.0cm}}@{{}}}}
+\textbf{{Área delimitada}} & {_n(summary.get('area_km2'))} km$^2$ \\[0.28cm]
+\textbf{{Exutorio seleccionado}} & {_latex_escape(outlet_text)} \\[0.28cm]
+\textbf{{CRS de cálculo}} & {_latex_escape(summary.get('crs_calculo') or summary.get('crs_dem') or 'N/D')} \\[0.28cm]
+\textbf{{Resolución aproximada}} & {_latex_escape(resolution_text)} \\[0.28cm]
+\textbf{{Fecha de procesamiento}} & {generated_at} \\
+\end{{tabular}}
+\vfill
+\rule{{\textwidth}}{{0.4pt}}\\[0.25cm]
+{{\small Documento generado automáticamente por HydroBasin Watershed Studio.}}
+\end{{titlepage}}
+
 \tableofcontents
+\listoffigures
 \newpage
 
 \section{{Objeto y alcance}}
-El presente informe documenta la delimitación automática de la cuenca aportante al exutorio seleccionado y la caracterización de su estructura de drenaje a partir de un Modelo Digital de Elevación (DEM).
+El presente informe documenta la delimitación automática de la cuenca aportante al exutorio seleccionado y la caracterización de su estructura de drenaje a partir de un Modelo Digital de Elevación (DEM). Los resultados representan una interpretación hidrológica derivada del relieve, del algoritmo D8 y de los umbrales de análisis seleccionados.
 
-\section{{Metodología}}
-El procesamiento comprende acondicionamiento hidrológico del DEM, dirección de flujo D8, acumulación, ajuste del exutorio, delimitación de la cuenca principal, extracción de la red, jerarquización de Strahler y subdivisión hidrológica interna.
+\section{{Metodología de procesamiento}}
+\subsection{{Acondicionamiento hidrológico del DEM}}
+Se corrigieron depresiones cerradas, pits y zonas planas para obtener una superficie hidrológicamente continua antes del cálculo de direcciones de flujo.
 
-\section{{Resultados}}
+\subsection{{Dirección y acumulación de flujo}}
+La dirección de flujo se calculó mediante el esquema D8. Posteriormente se obtuvo la acumulación de flujo como número de celdas contribuyentes hacia cada posición del raster.
+
+\subsection{{Exutorio y delimitación de la cuenca}}
+El punto seleccionado por el usuario se ajustó a una celda cercana de alta acumulación. A partir de este exutorio se identificó la totalidad del área que drena hacia el punto de salida.
+
+\subsection{{Red de drenaje, Strahler y subcuencas}}
+La red se extrajo usando un umbral equivalente a {_n(summary.get('minimum_area_km2'), 3)} km$^2$ de área mínima aportante. La jerarquía se evaluó mediante el orden de Strahler y la cuenca principal se subdividió en unidades internas asociadas a confluencias y trayectorias de drenaje D8.
+
+\section{{Resultados hidrológicos y morfométricos}}
 \begin{{table}}[H]
 \centering
-\begin{{tabular}}{{lll}}
+\renewcommand{{\arraystretch}}{{1.25}}
+\begin{{tabular}}{{p{{8.2cm}}r l}}
 \toprule
-Parámetro & Valor & Unidad \\
+\textbf{{Parámetro}} & \textbf{{Valor}} & \textbf{{Unidad}} \\
 \midrule
 Área de la cuenca & {_n(summary.get('area_km2'))} & km$^2$ \\
 Perímetro & {_n(summary.get('perimetro_km'))} & km \\
 Coeficiente de compacidad & {_n(summary.get('coeficiente_compacidad'), 3)} & -- \\
 Relación de circularidad & {_n(summary.get('relacion_circularidad'), 3)} & -- \\
 Área mínima de aporte & {_n(summary.get('minimum_area_km2'), 3)} & km$^2$ \\
+Umbral de drenaje & {_n(summary.get('drainage_threshold'), 0)} & celdas \\
 Orden máximo de Strahler & {summary.get('strahler_max', 'N/D')} & -- \\
 Número de subcuencas & {summary.get('subbasin_count', 'N/D')} & -- \\
+Resolución métrica aproximada & \multicolumn{{2}}{{l}}{{{_latex_escape(resolution_text)}}} \\
+CRS de cálculo & \multicolumn{{2}}{{l}}{{{_latex_escape(summary.get('crs_calculo') or 'N/D')}}} \\
 \bottomrule
 \end{{tabular}}
-\caption{{Síntesis de parámetros hidrológicos y morfométricos.}}
+\caption{{Síntesis de parámetros del análisis.}}
 \end{{table}}
 
+{subtable}
+
 \section{{Cartografía técnica}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.92\textwidth]{{{figures['dem']}}}\caption{{Contexto regional del DEM y límite de la cuenca.}}\end{{figure}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.92\textwidth]{{{figures['hillshade']}}}\caption{{Relieve sombreado de la cuenca.}}\end{{figure}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.92\textwidth]{{{figures['accumulation']}}}\caption{{Acumulación de flujo dentro de la cuenca.}}\end{{figure}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.92\textwidth]{{{figures['watershed']}}}\caption{{Cuenca principal y red de drenaje.}}\end{{figure}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.92\textwidth]{{{figures['strahler']}}}\caption{{Jerarquía de la red según Strahler.}}\end{{figure}}
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{{{figures['dem']}}}
+\caption{{Contexto regional del DEM y localización de la cuenca delimitada.}}
+\label{{fig:dem}}
+\end{{figure}}
+
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{{{figures['hillshade']}}}
+\caption{{Relieve sombreado de la cuenca.}}
+\label{{fig:hillshade}}
+\end{{figure}}
+
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{{{figures['accumulation']}}}
+\caption{{Acumulación de flujo dentro de la cuenca en escala logarítmica.}}
+\label{{fig:acc}}
+\end{{figure}}
+
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{{{figures['watershed']}}}
+\caption{{Cuenca principal y red de drenaje extraída.}}
+\label{{fig:cuenca}}
+\end{{figure}}
+
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{{{figures['strahler']}}}
+\caption{{Jerarquía de la red de drenaje según el orden de Strahler.}}
+\label{{fig:strahler}}
+\end{{figure}}
 {subfigure}
 
-\section{{Criterio de extracción de drenajes}}
-El área mínima de aporte controla la densidad de la red. Valores menores representan cauces potenciales de menor jerarquía; valores mayores conservan principalmente los drenajes estructurales de la cuenca.
+\section{{Interpretación del umbral de drenaje}}
+El área mínima de aporte controla la densidad de la red extraída. Valores menores permiten representar cauces potenciales de menor jerarquía, mientras que valores mayores conservan principalmente los drenajes estructurales. Por tanto, la red y las subcuencas obtenidas son dependientes de la escala del DEM y del umbral seleccionado.
+
+\section{{Observaciones técnicas}}
+Los límites presentados corresponden a resultados derivados del DEM y no sustituyen cartografía hidrográfica oficial. Para estudios de detalle se recomienda validar el exutorio, la red y las divisorias mediante cartografía de mayor resolución, información de campo y fuentes oficiales cuando estén disponibles.
+
 \end{{document}}
 """
     tex_path.write_text(tex, encoding="utf-8")
     return tex_path.name
 
 
-def _page_header_footer(canvas, doc):
-    canvas.saveState()
-    width, height = A4
-    canvas.setStrokeColor(RULE)
-    canvas.setLineWidth(0.5)
-    canvas.line(doc.leftMargin, height - 1.25 * cm, width - doc.rightMargin, height - 1.25 * cm)
-    canvas.setFont("Times-Roman", 8)
-    canvas.setFillColor(MUTED)
-    canvas.drawString(doc.leftMargin, height - 0.92 * cm, "HydroBasin · Informe de análisis hidrográfico")
-    canvas.drawRightString(width - doc.rightMargin, 0.8 * cm, f"Página {doc.page}")
-    canvas.restoreState()
+def _compile_latex(output_dir: Path, tex_name: str) -> dict:
+    pdflatex = _find_pdflatex()
+    pdf_path = output_dir / Path(tex_name).with_suffix(".pdf").name
+    if not pdflatex:
+        return {
+            "compiled": False,
+            "pdf": None,
+            "compiler_found": False,
+            "compiler_path": None,
+            "compile_error": "HydroBasin no pudo localizar pdflatex en el PATH ni en las rutas habituales de MiKTeX.",
+        }
 
+    last_output = ""
+    try:
+        for _ in range(2):
+            completed = subprocess.run(
+                [pdflatex, "-interaction=nonstopmode", "-halt-on-error", tex_name],
+                cwd=output_dir,
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=180,
+            )
+            last_output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+            if completed.returncode != 0:
+                lines = [line.strip() for line in last_output.splitlines() if line.strip()]
+                detail = " | ".join(lines[-12:])[-2400:]
+                return {
+                    "compiled": False,
+                    "pdf": None,
+                    "compiler_found": True,
+                    "compiler_path": pdflatex,
+                    "compile_error": detail or f"pdflatex terminó con código {completed.returncode}.",
+                }
 
-def _cover_footer(canvas, doc):
-    canvas.saveState()
-    width, _ = A4
-    canvas.setStrokeColor(ACCENT)
-    canvas.setLineWidth(1.2)
-    canvas.line(doc.leftMargin, 1.0 * cm, width - doc.rightMargin, 1.0 * cm)
-    canvas.setFont("Times-Italic", 8)
-    canvas.setFillColor(MUTED)
-    canvas.drawString(doc.leftMargin, 0.65 * cm, "Generado automáticamente por HydroBasin Watershed Studio")
-    canvas.restoreState()
+        if not pdf_path.exists():
+            return {
+                "compiled": False,
+                "pdf": None,
+                "compiler_found": True,
+                "compiler_path": pdflatex,
+                "compile_error": "pdflatex terminó sin crear el archivo PDF esperado.",
+            }
 
-
-def _generar_pdf_directo(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None) -> str:
-    pdf_path = output_dir / "informe_hydrobasin.pdf"
-    doc = SimpleDocTemplate(
-        str(pdf_path),
-        pagesize=A4,
-        rightMargin=2.25 * cm,
-        leftMargin=2.25 * cm,
-        topMargin=1.8 * cm,
-        bottomMargin=1.6 * cm,
-        title="Informe de delimitación y análisis de cuenca hidrográfica",
-        author="HydroBasin",
-    )
-
-    styles = getSampleStyleSheet()
-    cover_brand = ParagraphStyle("CoverBrand", fontName="Times-Bold", fontSize=13, leading=16, textColor=ACCENT, spaceAfter=8)
-    cover_title = ParagraphStyle("CoverTitle", fontName="Times-Bold", fontSize=26, leading=31, textColor=TEXT, spaceAfter=14)
-    cover_subtitle = ParagraphStyle("CoverSubtitle", fontName="Times-Roman", fontSize=11, leading=16, textColor=MUTED, spaceAfter=22)
-    heading = ParagraphStyle("Heading", fontName="Times-Bold", fontSize=15, leading=18, textColor=TEXT, spaceBefore=10, spaceAfter=8)
-    subheading = ParagraphStyle("SubHeading", fontName="Times-Bold", fontSize=11.5, leading=14, textColor=ACCENT, spaceBefore=8, spaceAfter=5)
-    body = ParagraphStyle("Body", fontName="Times-Roman", fontSize=10.2, leading=15, textColor=TEXT, alignment=TA_JUSTIFY, spaceAfter=8)
-    caption = ParagraphStyle("Caption", fontName="Times-Italic", fontSize=8.8, leading=11, textColor=MUTED, alignment=TA_CENTER, spaceAfter=9)
-    small = ParagraphStyle("Small", fontName="Times-Roman", fontSize=8.5, leading=11, textColor=MUTED)
-    toc = ParagraphStyle("TOC", fontName="Times-Roman", fontSize=10.5, leading=18, textColor=TEXT)
-
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
-    resolution = summary.get("metric_resolution_m")
-    resolution_text = "N/D" if not resolution else f"{resolution[0]:.1f} × {resolution[1]:.1f} m"
-
-    meta_data = [
-        ["Área delimitada", f"{_n(summary.get('area_km2'))} km²"],
-        ["Exutorio", f"{summary.get('outlet_original', {}).get('y', 'N/D')}, {summary.get('outlet_original', {}).get('x', 'N/D')}"],
-        ["CRS de cálculo", str(summary.get("crs_calculo") or summary.get("crs_dem") or "N/D")],
-        ["Resolución aproximada", resolution_text],
-        ["Fecha de procesamiento", now],
-    ]
-    meta_table = Table(meta_data, colWidths=[5.0 * cm, 9.2 * cm])
-    meta_table.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (0, -1), "Times-Bold"),
-        ("FONTNAME", (1, 0), (1, -1), "Times-Roman"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("TEXTCOLOR", (0, 0), (0, -1), MUTED),
-        ("TEXTCOLOR", (1, 0), (1, -1), TEXT),
-        ("LINEBELOW", (0, 0), (-1, -1), 0.35, RULE),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-    ]))
-
-    story = [
-        Spacer(1, 2.1 * cm),
-        Paragraph("HYDROBASIN / WATERSHED STUDIO", cover_brand),
-        Paragraph("Informe de delimitación y análisis de cuenca hidrográfica", cover_title),
-        Paragraph(
-            "Procesamiento reproducible del modelo digital de elevación, delimitación de la cuenca aportante, estructura de drenaje, jerarquía de corrientes y subdivisión hidrológica interna.",
-            cover_subtitle,
-        ),
-        Spacer(1, 0.7 * cm),
-        meta_table,
-        Spacer(1, 1.3 * cm),
-        Paragraph("Documento técnico generado automáticamente. Los resultados dependen de la resolución, calidad y acondicionamiento del DEM, así como del criterio de área mínima de aporte adoptado.", small),
-        PageBreak(),
-        Paragraph("Contenido", heading),
-        Paragraph("1. Objeto y alcance", toc),
-        Paragraph("2. Metodología de procesamiento", toc),
-        Paragraph("3. Resultados hidrológicos y morfométricos", toc),
-        Paragraph("4. Subcuencas", toc),
-        Paragraph("5. Cartografía técnica", toc),
-        Paragraph("6. Criterio de extracción de drenajes", toc),
-        PageBreak(),
-        Paragraph("1. Objeto y alcance", heading),
-        Paragraph(
-            "El presente informe documenta la delimitación de la cuenca hidrográfica que aporta al exutorio seleccionado. El análisis se obtiene directamente del DEM y comprende la estructura de drenaje superficial derivada, la jerarquización de corrientes y la subdivisión de la cuenca en unidades hidrológicas internas.",
-            body,
-        ),
-        Paragraph("2. Metodología de procesamiento", heading),
-        Paragraph("2.1 Acondicionamiento hidrológico", subheading),
-        Paragraph("Se corrigen pits, depresiones y zonas planas para obtener una superficie hidrológicamente conectada y apta para el cálculo de flujo.", body),
-        Paragraph("2.2 Dirección y acumulación", subheading),
-        Paragraph("La dirección de flujo se calcula mediante el esquema D8. La acumulación representa el número de celdas que aportan aguas arriba a cada celda del modelo.", body),
-        Paragraph("2.3 Exutorio, cuenca y red", subheading),
-        Paragraph("El exutorio indicado por el usuario se ajusta a una celda de alta acumulación. A partir de ese punto se delimita la cuenca principal y se extrae la red de drenaje según el área mínima de aporte seleccionada.", body),
-        Paragraph("2.4 Jerarquía y subcuencas", subheading),
-        Paragraph("La red se jerarquiza mediante el orden de Strahler. Las subcuencas se estructuran dentro de la cuenca principal utilizando confluencias y salidas de la red D8 como puntos de control, generando unidades no solapadas asociadas a la organización del drenaje.", body),
-        Paragraph("3. Resultados hidrológicos y morfométricos", heading),
-    ]
-
-    results_data = [
-        ["Parámetro", "Resultado", "Unidad"],
-        ["Área de la cuenca", _n(summary.get("area_km2")), "km²"],
-        ["Perímetro", _n(summary.get("perimetro_km")), "km"],
-        ["Coeficiente de compacidad", _n(summary.get("coeficiente_compacidad"), 3), "—"],
-        ["Relación de circularidad", _n(summary.get("relacion_circularidad"), 3), "—"],
-        ["Área mínima de aporte", _n(summary.get("minimum_area_km2"), 3), "km²"],
-        ["Umbral de drenaje", _n(summary.get("drainage_threshold"), 0), "celdas"],
-        ["Orden máximo de Strahler", str(summary.get("strahler_max", "N/D")), "—"],
-        ["Número de subcuencas", str(summary.get("subbasin_count", "N/D")), "—"],
-        ["Resolución métrica aprox.", resolution_text, ""],
-        ["CRS de cálculo", str(summary.get("crs_calculo") or "N/D"), ""],
-    ]
-    table = Table(results_data, colWidths=[7.2 * cm, 5.6 * cm, 2.2 * cm], repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Times-Bold"),
-        ("FONTNAME", (0, 1), (-1, -1), "Times-Roman"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("LINEBELOW", (0, 0), (-1, -1), 0.35, RULE),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, SOFT]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
-    story.extend([table, Spacer(1, 10), Paragraph("4. Subcuencas", heading)])
-
-    if subbasins is not None and not subbasins.empty:
-        story.append(Paragraph(
-            f"Se identificaron <b>{len(subbasins)}</b> unidades hidrológicas internas. Estas subcuencas representan una partición de la cuenca principal controlada por la red de drenaje derivada del DEM y permiten analizar aportes, organización espacial y jerarquía del sistema con mayor detalle.",
-            body,
-        ))
-        if "area_km2" in subbasins.columns:
-            largest = subbasins.sort_values("area_km2", ascending=False).head(10)
-            rows = [["ID", "Área (km²)"]]
-            rows += [[str(int(r.subbasin_id)), f"{float(r.area_km2):.2f}"] for _, r in largest.iterrows()]
-            subtable = Table(rows, colWidths=[4.0 * cm, 5.0 * cm], repeatRows=1)
-            subtable.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8eeee")),
-                ("FONTNAME", (0, 0), (-1, 0), "Times-Bold"),
-                ("FONTNAME", (0, 1), (-1, -1), "Times-Roman"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-                ("LINEBELOW", (0, 0), (-1, -1), 0.3, RULE),
-                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]))
-            story.extend([Paragraph("Subcuencas de mayor área", subheading), subtable])
-    else:
-        story.append(Paragraph("No fue posible construir una subdivisión interna con el umbral de drenaje utilizado.", body))
-
-    story.extend([PageBreak(), Paragraph("5. Cartografía técnica", heading)])
-    figure_specs = [
-        ("dem", "Figura 1. Contexto regional del DEM y ubicación de la cuenca delimitada."),
-        ("hillshade", "Figura 2. Relieve sombreado encuadrado a la cuenca principal."),
-        ("accumulation", "Figura 3. Acumulación de flujo dentro de la cuenca, representada en escala logarítmica."),
-        ("watershed", "Figura 4. Límite de la cuenca principal y red de drenaje derivada."),
-        ("strahler", "Figura 5. Jerarquía de corrientes según el orden de Strahler."),
-        ("subbasins", "Figura 6. Subcuencas hidrológicas internas y su relación con la red de drenaje."),
-    ]
-    for key, text in figure_specs:
-        if not figures.get(key):
-            continue
-        image_path = output_dir / figures[key]
-        if image_path.exists():
-            story.append(KeepTogether([
-                Image(str(image_path), width=15.7 * cm, height=10.8 * cm, kind="proportional"),
-                Paragraph(text, caption),
-            ]))
-
-    story.extend([
-        Paragraph("6. Criterio de extracción de drenajes", heading),
-        Paragraph(
-            "El área mínima de aporte es un parámetro de escala. Un valor pequeño produce una red densa que puede incluir vaguadas y cauces potenciales no representados en la cartografía base; al aumentar el valor se conservan progresivamente los drenajes de mayor jerarquía. Por tanto, la selección debe responder al objetivo del estudio, la resolución del DEM y la escala de representación requerida.",
-            body,
-        ),
-    ])
-
-    doc.build(story, onFirstPage=_cover_footer, onLaterPages=_page_header_footer)
-    return pdf_path.name
+        return {
+            "compiled": True,
+            "pdf": pdf_path.name,
+            "compiler_found": True,
+            "compiler_path": pdflatex,
+            "compile_error": None,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "compiled": False,
+            "pdf": None,
+            "compiler_found": True,
+            "compiler_path": pdflatex,
+            "compile_error": "La compilación LaTeX superó 180 segundos. MiKTeX puede estar esperando instalar un paquete faltante.",
+        }
+    except Exception as exc:
+        return {
+            "compiled": False,
+            "pdf": None,
+            "compiler_found": True,
+            "compiler_path": pdflatex,
+            "compile_error": str(exc),
+        }
 
 
 def generar_informes(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None) -> dict:
-    """Genera un PDF técnico directo y conserva una fuente LaTeX opcional."""
-    tex_name = _generar_fuente_latex(output_dir, summary, figures)
-    pdf_name = _generar_pdf_directo(output_dir, summary, figures, subbasins=subbasins)
-    return {"pdf": pdf_name, "tex": tex_name, "pdf_engine": "reportlab"}
+    """Genera la fuente LaTeX y compila el PDF oficial de HydroBasin con pdflatex."""
+    tex_name = _generar_fuente_latex(output_dir, summary, figures, subbasins=subbasins)
+    compile_result = _compile_latex(output_dir, tex_name)
+    return {
+        "tex": tex_name,
+        "pdf": compile_result["pdf"],
+        "compiled": compile_result["compiled"],
+        "pdf_engine": "pdflatex",
+        "compiler_found": compile_result["compiler_found"],
+        "compiler_path": compile_result["compiler_path"],
+        "compile_error": compile_result["compile_error"],
+    }
