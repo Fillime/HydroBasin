@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
@@ -9,6 +10,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from app.api.routes.dem_jobs import resolve_server_dem
 from app.core.config import settings
 from app.services.hydro_service import analyze_dem
 
@@ -18,14 +20,17 @@ _executor = ThreadPoolExecutor(max_workers=2)
 
 @router.post("/watershed-stream")
 async def watershed_stream(
-    dem: UploadFile = File(...),
+    dem: UploadFile | None = File(None),
+    dem_id: str | None = Form(None),
     x: float = Form(...),
     y: float = Form(...),
     point_crs: str = Form("EPSG:4326"),
     minimum_area_km2: float = Form(5.0),
     dem_source: str | None = Form(None),
 ):
-    if not dem.filename or not dem.filename.lower().endswith((".tif", ".tiff")):
+    if not dem and not dem_id:
+        raise HTTPException(status_code=400, detail="Debes cargar un DEM o seleccionar uno descargado en el servidor.")
+    if dem and (not dem.filename or not dem.filename.lower().endswith((".tif", ".tiff"))):
         raise HTTPException(status_code=400, detail="El DEM debe ser un GeoTIFF (.tif o .tiff).")
     if minimum_area_km2 <= 0:
         raise HTTPException(status_code=400, detail="El área mínima de aporte debe ser mayor que cero.")
@@ -37,8 +42,22 @@ async def watershed_stream(
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dem_path = input_dir / Path(dem.filename).name
-    dem_path.write_bytes(await dem.read())
+    if dem_id:
+        try:
+            source_path = resolve_server_dem(dem_id)
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        dem_path = input_dir / source_path.name
+        # Keep the downloaded source as the canonical copy, but isolate each analysis job.
+        try:
+            dem_path.hardlink_to(source_path)
+        except OSError:
+            shutil.copy2(source_path, dem_path)
+    else:
+        assert dem is not None
+        dem_path = input_dir / Path(dem.filename or "dem.tif").name
+        dem_path.write_bytes(await dem.read())
+
     events: queue.Queue[dict] = queue.Queue()
 
     def progress(level: str, message: str, percent: int) -> None:
@@ -49,6 +68,8 @@ async def watershed_stream(
             progress("info", f"Proceso {job_id[:8]} iniciado.", 0)
             if dem_source:
                 progress("info", f"Fuente DEM: {dem_source}.", 1)
+            if dem_id:
+                progress("ok", "Usando el DEM directamente desde el almacenamiento del backend; no se vuelve a transferir por el navegador.", 2)
             result = analyze_dem(
                 dem_path=dem_path,
                 x=x,
