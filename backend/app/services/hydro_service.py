@@ -19,6 +19,7 @@ def analyze_dem(
     threshold: float | None,
     output_dir: Path,
     minimum_area_km2: float | None = None,
+    dem_source: str | None = None,
     progress: Callable[[str, str, int], None] | None = None,
 ) -> dict:
     return run_watershed_analysis(
@@ -29,5 +30,6 @@ def analyze_dem(
         output_dir=output_dir,
         drainage_threshold=threshold,
         minimum_area_km2=minimum_area_km2,
+        dem_source=dem_source,
         progress=progress,
     )
