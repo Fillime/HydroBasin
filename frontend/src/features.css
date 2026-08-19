@@ -1,0 +1,42 @@
+.preset-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.preset-row button {
+  height: 28px;
+  border: 1px solid var(--hb-border);
+  border-radius: 6px;
+  background: var(--hb-bg-2);
+  color: var(--hb-text-3);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.preset-row button:hover,
+.preset-row button.active {
+  border-color: color-mix(in srgb, var(--hb-accent) 55%, var(--hb-border));
+  background: var(--hb-hover);
+  color: var(--hb-text-1);
+}
+
+.preset-row button.active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hb-accent) 45%, transparent);
+}
+
+.download-list {
+  display: grid;
+  gap: 6px;
+}
+
+.download-list .secondary-button {
+  justify-content: flex-start;
+}
+
+@media (max-width: 1180px) {
+  .preset-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
