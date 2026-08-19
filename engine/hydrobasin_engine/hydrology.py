@@ -17,3 +17,9 @@ def extraer_red_mascara(accum, umbral: float):
     if umbral <= 0:
         raise ValueError("El umbral debe ser mayor que cero.")
     return accum >= umbral
+
+
+def orden_strahler(grid: Grid, fdir, accum, umbral: float, dirmap=D8):
+    """Calcula el orden de corrientes Strahler sobre la red definida por el umbral."""
+    mask = extraer_red_mascara(accum, umbral)
+    return grid.stream_order(fdir, mask, dirmap=dirmap)
