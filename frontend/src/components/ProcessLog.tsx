@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { CheckCircle2, ChevronDown, CircleAlert, Info, LoaderCircle, Trash2 } from 'lucide-react'
 import './ProcessLog.css'
 
@@ -25,6 +26,13 @@ const iconFor = (level: ProcessLogEntry['level'], running: boolean) => {
 }
 
 export default function ProcessLog({ open, running, progress, entries, onClose, onClear }: Props) {
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open || !bodyRef.current) return
+    bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+  }, [entries, open])
+
   if (!open) return null
 
   return (
@@ -44,7 +52,7 @@ export default function ProcessLog({ open, running, progress, entries, onClose, 
 
       <div className="console-progress-track"><span style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>
 
-      <div className="process-console-body">
+      <div className="process-console-body" ref={bodyRef}>
         {entries.length === 0 ? (
           <div className="console-empty"><Info size={13} /> Ejecuta un análisis para ver el progreso del motor.</div>
         ) : entries.map((entry, index) => {
