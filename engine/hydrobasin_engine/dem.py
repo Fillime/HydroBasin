@@ -33,6 +33,7 @@ def metadatos_dem(ruta: str | Path) -> dict:
             "height": src.height,
             "bounds": tuple(src.bounds),
             "resolution": src.res,
+            "transform": src.transform,
             "nodata": src.nodata,
             "dtype": src.dtypes[0],
         }
