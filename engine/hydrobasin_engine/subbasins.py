@@ -8,15 +8,16 @@ from shapely.geometry import shape
 
 from .hydrology import D8
 
-# Orden de direcciones de pysheds: N, NE, E, SE, S, SW, W, NW.
 _DROW = np.array([-1, -1, 0, 1, 1, 1, 0, -1], dtype=np.int8)
 _DCOL = np.array([0, 1, 1, 1, 0, -1, -1, -1], dtype=np.int8)
 
 
 @njit(cache=True)
 def _downstream_indices(fdir_flat, rows, cols, dirmap):
+    # int32 soporta holgadamente rásteres de decenas de millones de celdas
+    # y reduce a la mitad la memoria frente a int64.
     n = rows * cols
-    downstream = np.full(n, -1, dtype=np.int64)
+    downstream = np.full(n, -1, dtype=np.int32)
     for idx in range(n):
         value = fdir_flat[idx]
         r = idx // cols
@@ -33,7 +34,7 @@ def _downstream_indices(fdir_flat, rows, cols, dirmap):
 
 @njit(cache=True)
 def _stream_indegree(stream_flat, downstream):
-    indegree = np.zeros(stream_flat.size, dtype=np.int16)
+    indegree = np.zeros(stream_flat.size, dtype=np.uint8)
     for idx in range(stream_flat.size):
         if not stream_flat[idx]:
             continue
@@ -50,7 +51,6 @@ def _stream_targets(stream_flat, downstream, indegree):
     target_id = np.zeros(n, dtype=np.int32)
     next_id = 1
 
-    # Confluencias y salidas son puntos de control de subcuenca.
     for idx in range(n):
         if not stream_flat[idx]:
             continue
@@ -60,7 +60,6 @@ def _stream_targets(stream_flat, downstream, indegree):
             target_id[idx] = next_id
             next_id += 1
 
-    # Propaga el id del primer punto de control aguas abajo con compresión de camino.
     for idx in range(n):
         if not stream_flat[idx] or target_id[idx] != 0:
             continue
@@ -82,7 +81,7 @@ def _stream_targets(stream_flat, downstream, indegree):
 
 @njit(cache=True)
 def _assign_basin_labels(basin_flat, stream_flat, stream_labels, downstream):
-    """Asigna cada celda de la cuenca al primer tramo/objetivo de corriente aguas abajo."""
+    """Asigna cada celda de la cuenca al primer control de corriente aguas abajo."""
     n = basin_flat.size
     labels = np.zeros(n, dtype=np.int32)
     for idx in range(n):
@@ -116,8 +115,8 @@ def delimitar_subcuencas(
 ) -> tuple[np.ndarray, gpd.GeoDataFrame]:
     """
     Genera una partición no solapada de la cuenca principal usando confluencias
-    y salidas de la red D8 como puntos de control. El umbral controla qué
-    drenajes estructuran la subdivisión.
+    y salidas de la red D8 como puntos de control. El resultado es una
+    subdivisión derivada del DEM y del umbral, no una delimitación oficial.
     """
     basin = np.asarray(watershed_mask, dtype=bool)
     flow = np.asarray(fdir)
@@ -131,7 +130,7 @@ def delimitar_subcuencas(
     labels = _assign_basin_labels(basin.ravel(), stream.ravel(), stream_labels, downstream).reshape(rows, cols)
 
     features = []
-    for geom, value in shapes(labels.astype("int32"), mask=labels > 0, transform=transform):
+    for geom, value in shapes(labels, mask=labels > 0, transform=transform):
         features.append({"subbasin_id": int(value), "geometry": shape(geom)})
 
     if not features:
@@ -141,6 +140,5 @@ def delimitar_subcuencas(
     gdf = gdf.dissolve(by="subbasin_id", as_index=False)
     metric = gdf.estimate_utm_crs() if gdf.crs and gdf.crs.is_geographic else gdf.crs
     if metric:
-        areas = gdf.to_crs(metric).geometry.area / 1e6
-        gdf["area_km2"] = areas.values
+        gdf["area_km2"] = (gdf.to_crs(metric).geometry.area / 1e6).values
     return labels, gdf
