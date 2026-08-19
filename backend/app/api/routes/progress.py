@@ -23,6 +23,7 @@ async def watershed_stream(
     y: float = Form(...),
     point_crs: str = Form("EPSG:4326"),
     minimum_area_km2: float = Form(5.0),
+    dem_source: str | None = Form(None),
 ):
     if not dem.filename or not dem.filename.lower().endswith((".tif", ".tiff")):
         raise HTTPException(status_code=400, detail="El DEM debe ser un GeoTIFF (.tif o .tiff).")
@@ -46,6 +47,8 @@ async def watershed_stream(
     def run() -> None:
         try:
             progress("info", f"Proceso {job_id[:8]} iniciado.", 0)
+            if dem_source:
+                progress("info", f"Fuente DEM: {dem_source}.", 1)
             result = analyze_dem(
                 dem_path=dem_path,
                 x=x,
@@ -53,6 +56,7 @@ async def watershed_stream(
                 point_crs=point_crs,
                 threshold=None,
                 minimum_area_km2=minimum_area_km2,
+                dem_source=dem_source,
                 output_dir=output_dir,
                 progress=progress,
             )
