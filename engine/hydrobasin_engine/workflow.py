@@ -9,7 +9,7 @@ import numpy as np
 from .dem import cargar_dem, corregir_dem, metadatos_dem, umbral_celdas_desde_area
 from .delineation import ajustar_punto_salida, delimitar_cuenca, transformar_punto
 from .hydrology import acumulacion_flujo, direccion_flujo, orden_strahler
-from .io import guardar_raster, guardar_vector, mascara_a_poligono
+from .io import guardar_raster, guardar_shapefile_zip, guardar_vector, mascara_a_poligono
 from .morphometry import parametros_morfometricos
 from .report import generar_figuras, generar_informes
 from .streams import extraer_red_vectorial
@@ -90,13 +90,15 @@ def run_watershed_analysis(
     report("info", "Vectorizando el límite de la cuenca…", 65)
     watershed = mascara_a_poligono(watershed_mask, dem_path)
     guardar_vector(watershed, output_dir / "cuenca.gpkg")
-    report("ok", "Polígono de cuenca generado.", 68)
+    guardar_shapefile_zip(watershed, output_dir / "cuenca_shp.zip", "cuenca")
+    report("ok", "Polígono de cuenca generado en GeoPackage y Shapefile ZIP.", 68)
 
     report("info", f"Extrayendo red de drenaje · umbral {drainage_threshold:,.0f} celdas…", 70)
     drainage = extraer_red_vectorial(grid, flow_direction, accumulation, drainage_threshold, crs=metadata["crs"])
     if not drainage.empty:
         guardar_vector(drainage, output_dir / "red_drenaje.gpkg")
-        report("ok", f"Red de drenaje generada · {len(drainage)} segmentos.", 74)
+        guardar_shapefile_zip(drainage, output_dir / "red_drenaje_shp.zip", "red_drenaje")
+        report("ok", f"Red de drenaje generada · {len(drainage)} segmentos · GPKG + SHP ZIP.", 74)
     else:
         report("warning", "No se generaron segmentos con el umbral actual.", 74)
 
@@ -117,7 +119,8 @@ def run_watershed_analysis(
     subbasin_count = int(len(subbasins))
     if subbasin_count:
         guardar_vector(subbasins, output_dir / "subcuencas.gpkg")
-        report("ok", f"Subcuencas generadas · {subbasin_count} unidades internas.", 86)
+        guardar_shapefile_zip(subbasins, output_dir / "subcuencas_shp.zip", "subcuencas")
+        report("ok", f"Subcuencas generadas · {subbasin_count} unidades · GPKG + SHP ZIP.", 86)
     else:
         report("warning", "No se pudieron generar subcuencas con el umbral actual.", 86)
 
