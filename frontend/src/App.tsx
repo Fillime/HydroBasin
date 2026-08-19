@@ -23,6 +23,7 @@ import {
 import {
   CircleMarker,
   GeoJSON,
+  ImageOverlay,
   MapContainer,
   Popup,
   ScaleControl,
@@ -45,31 +46,46 @@ type Summary = {
   outlet_snapped?: { x: number; y: number; crs: string }
 }
 
+type Bounds = { west: number; south: number; east: number; north: number }
+type DemPreview = {
+  filename: string
+  crs: string
+  width: number
+  height: number
+  resolution: [number, number]
+  bounds_native: Bounds
+  bounds_wgs84: Bounds
+  elevation_min: number
+  elevation_max: number
+  preview_data_url: string
+}
+
 type Outlet = { lat: number; lng: number }
 type ViewId = 'home' | 'analysis' | 'projects' | 'results' | 'data' | 'settings'
 type GeoJsonData = Record<string, unknown> | null
 
-type MapClickProps = {
-  onPick: (outlet: Outlet) => void
-}
-
-function MapClickHandler({ onPick }: MapClickProps) {
-  useMapEvents({
-    click(event) {
-      onPick({ lat: event.latlng.lat, lng: event.latlng.lng })
-    },
-  })
+function MapClickHandler({ onPick }: { onPick: (outlet: Outlet) => void }) {
+  useMapEvents({ click: (event) => onPick({ lat: event.latlng.lat, lng: event.latlng.lng }) })
   return null
 }
 
-function FitToResult({ data }: { data: GeoJsonData }) {
+function FitToGeoJson({ data }: { data: GeoJsonData }) {
   const map = useMap()
   useEffect(() => {
     if (!data) return
-    const layer = L.geoJSON(data as any)
-    const bounds = layer.getBounds()
+    const bounds = L.geoJSON(data as any).getBounds()
     if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 })
   }, [data, map])
+  return null
+}
+
+function FitToDem({ preview }: { preview: DemPreview | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (!preview) return
+    const b = preview.bounds_wgs84
+    map.fitBounds([[b.south, b.west], [b.north, b.east]], { padding: [24, 24] })
+  }, [preview, map])
   return null
 }
 
@@ -86,16 +102,13 @@ const workflow = [
 ]
 
 const viewLabels: Record<ViewId, string> = {
-  home: 'Inicio',
-  analysis: 'Análisis',
-  projects: 'Proyectos',
-  results: 'Resultados',
-  data: 'Datos',
-  settings: 'Configuración',
+  home: 'Inicio', analysis: 'Análisis', projects: 'Proyectos', results: 'Resultados', data: 'Datos', settings: 'Configuración',
 }
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null)
+  const [demPreview, setDemPreview] = useState<DemPreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [outlet, setOutlet] = useState<Outlet>({ lat: 7.06, lng: -73.85 })
   const [minimumAreaKm2, setMinimumAreaKm2] = useState('1')
   const [resolutionM, setResolutionM] = useState('30')
@@ -109,22 +122,12 @@ export default function App() {
   const [activeView, setActiveView] = useState<ViewId>('analysis')
   const [showInspector, setShowInspector] = useState(true)
   const [layers, setLayers] = useState<Record<string, boolean>>({
-    'Mapa base': true,
-    DEM: false,
-    Hillshade: false,
-    'DEM corregido': false,
-    'Dirección de flujo': false,
-    Acumulación: false,
-    Cuenca: true,
-    'Red de drenaje': true,
-    Exutorio: true,
+    'Mapa base': true, DEM: true, Hillshade: false, 'DEM corregido': false,
+    'Dirección de flujo': false, Acumulación: false, Cuenca: true,
+    'Red de drenaje': true, Exutorio: true,
   })
 
-  const fileSize = useMemo(() => {
-    if (!file) return ''
-    return `${(file.size / 1024 / 1024).toFixed(2)} MB`
-  }, [file])
-
+  const fileSize = useMemo(() => file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : '', [file])
   const thresholdCells = useMemo(() => {
     const area = Number(minimumAreaKm2)
     const resolution = Number(resolutionM)
@@ -133,44 +136,45 @@ export default function App() {
   }, [minimumAreaKm2, resolutionM])
 
   const clearResults = () => {
-    setSummary(null)
-    setWatershedGeoJson(null)
-    setDrainageGeoJson(null)
-    setJobId('')
+    setSummary(null); setWatershedGeoJson(null); setDrainageGeoJson(null); setJobId('')
   }
 
   const newProject = () => {
-    setFile(null)
-    setOutlet({ lat: 7.06, lng: -73.85 })
-    setMinimumAreaKm2('1')
-    setResolutionM('30')
-    setError('')
-    setActiveStep(0)
-    setActiveView('analysis')
-    clearResults()
+    setFile(null); setDemPreview(null); setOutlet({ lat: 7.06, lng: -73.85 })
+    setMinimumAreaKm2('1'); setResolutionM('30'); setError(''); setActiveStep(0)
+    setActiveView('analysis'); clearResults()
   }
 
-  const onFile = (event: ChangeEvent<HTMLInputElement>) => {
-    setFile(event.target.files?.[0] ?? null)
-    setError('')
-    clearResults()
-    setActiveStep(1)
-    setActiveView('analysis')
+  const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0] ?? null
+    setFile(selected); setDemPreview(null); setError(''); clearResults(); setActiveStep(selected ? 1 : 0); setActiveView('analysis')
+    if (!selected) return
+
+    setPreviewLoading(true)
+    try {
+      const body = new FormData()
+      body.append('dem', selected)
+      const response = await fetch('/api/analysis/dem-preview', { method: 'POST', body })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'No fue posible leer la extensión del DEM.')
+      setDemPreview(data)
+      setLayers((current) => ({ ...current, DEM: true }))
+      const b = data.bounds_wgs84 as Bounds
+      setOutlet({ lat: (b.south + b.north) / 2, lng: (b.west + b.east) / 2 })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible inspeccionar el GeoTIFF.')
+    } finally {
+      setPreviewLoading(false)
+    }
   }
 
   const pickOutlet = (point: Outlet) => {
-    setOutlet(point)
-    setActiveStep(5)
-    setError('')
-    clearResults()
+    setOutlet(point); setActiveStep(5); setError(''); clearResults()
   }
 
   const runAnalysis = async (event: FormEvent) => {
     event.preventDefault()
-    if (!file) {
-      setError('Carga primero un DEM GeoTIFF.')
-      return
-    }
+    if (!file) { setError('Carga primero un DEM GeoTIFF.'); return }
 
     const body = new FormData()
     body.append('dem', file)
@@ -179,8 +183,7 @@ export default function App() {
     body.append('point_crs', 'EPSG:4326')
     body.append('threshold', thresholdCells.toString())
 
-    setLoading(true)
-    setError('')
+    setLoading(true); setError('')
     try {
       const response = await fetch('/api/analysis/watershed', { method: 'POST', body })
       const data = await response.json()
@@ -189,14 +192,11 @@ export default function App() {
       setWatershedGeoJson(data.watershed_geojson ?? null)
       setDrainageGeoJson(data.drainage_geojson ?? null)
       setJobId(data.job_id ?? '')
-      setActiveStep(8)
-      setActiveView('results')
+      setActiveStep(8); setActiveView('results')
       setLayers((current) => ({ ...current, Cuenca: true, 'Red de drenaje': true }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error inesperado.')
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   const resultMetrics = summary ? (
@@ -209,124 +209,100 @@ export default function App() {
       <div><span>CRS de cálculo</span><strong>{summary.crs_calculo || '—'}</strong></div>
       <div><span>Umbral D8</span><strong>{summary.drainage_threshold?.toLocaleString()} celdas</strong></div>
     </div>
-  ) : (
-    <div className="empty-state"><Droplets size={18} /><span>Ejecuta un análisis para generar resultados.</span></div>
-  )
+  ) : <div className="empty-state"><Droplets size={18} /><span>Ejecuta un análisis para generar resultados.</span></div>
+
+  const demInfo = demPreview ? (
+    <div className="metrics-list">
+      <div><span>CRS</span><strong>{demPreview.crs}</strong></div>
+      <div><span>Dimensiones</span><strong>{demPreview.width} × {demPreview.height}</strong></div>
+      <div><span>Resolución</span><strong>{demPreview.resolution[0].toFixed(5)} × {demPreview.resolution[1].toFixed(5)}</strong></div>
+      <div><span>Elevación</span><strong>{demPreview.elevation_min.toFixed(1)} – {demPreview.elevation_max.toFixed(1)} m</strong></div>
+      <div><span>Oeste / Este</span><strong>{demPreview.bounds_wgs84.west.toFixed(5)} / {demPreview.bounds_wgs84.east.toFixed(5)}</strong></div>
+      <div><span>Sur / Norte</span><strong>{demPreview.bounds_wgs84.south.toFixed(5)} / {demPreview.bounds_wgs84.north.toFixed(5)}</strong></div>
+    </div>
+  ) : null
 
   const renderInspector = () => {
-    if (activeView === 'home') {
-      return (
-        <div className="inspector-content">
-          <div className="inspector-header"><span className="section-label">HYDROBASIN</span><h1>Inicio</h1><p>Workspace de delimitación y análisis de cuencas.</p></div>
-          <section className="form-section">
-            <div className="form-section-heading"><strong>Prueba rápida</strong><span>3 pasos</span></div>
-            <div className="instruction-list"><span>1. Carga un DEM GeoTIFF.</span><span>2. Haz clic en el mapa sobre el punto de salida.</span><span>3. Ejecuta el análisis y revisa la cuenca.</span></div>
-          </section>
-          <div className="run-area"><button className="primary-button" onClick={() => setActiveView('analysis')}><Play size={14} /> Abrir análisis</button></div>
-        </div>
-      )
-    }
+    if (activeView === 'home') return (
+      <div className="inspector-content">
+        <div className="inspector-header"><span className="section-label">HYDROBASIN</span><h1>Inicio</h1><p>Workspace de delimitación y análisis de cuencas.</p></div>
+        <section className="form-section"><div className="instruction-list"><span>1. Carga un DEM GeoTIFF.</span><span>2. Verifica su extensión en el mapa.</span><span>3. Marca el exutorio y ejecuta el análisis.</span></div></section>
+        <div className="run-area"><button className="primary-button" onClick={() => setActiveView('analysis')}><Play size={14} /> Abrir análisis</button></div>
+      </div>
+    )
 
-    if (activeView === 'projects') {
-      return (
-        <div className="inspector-content">
-          <div className="inspector-header"><span className="section-label">PROYECTOS</span><h1>Proyecto actual</h1><p>Por ahora HydroBasin trabaja con un proyecto local en memoria.</p></div>
-          <section className="form-section project-card"><strong>Cuenca sin título</strong><span>{file ? file.name : 'Sin DEM cargado'}</span><span>{summary ? 'Análisis completado' : 'Sin procesar'}</span></section>
-          <div className="run-area"><button className="secondary-button wide" onClick={newProject}><Plus size={14} /> Nuevo proyecto</button></div>
-        </div>
-      )
-    }
+    if (activeView === 'projects') return (
+      <div className="inspector-content">
+        <div className="inspector-header"><span className="section-label">PROYECTOS</span><h1>Proyecto actual</h1><p>Por ahora HydroBasin trabaja con un proyecto local en memoria.</p></div>
+        <section className="form-section project-card"><strong>Cuenca sin título</strong><span>{file ? file.name : 'Sin DEM cargado'}</span><span>{summary ? 'Análisis completado' : 'Sin procesar'}</span></section>
+        <div className="run-area"><button className="secondary-button wide" onClick={newProject}><Plus size={14} /> Nuevo proyecto</button></div>
+      </div>
+    )
 
-    if (activeView === 'results') {
-      return (
-        <div className="inspector-content">
-          <div className="inspector-header"><span className="section-label">RESULTADOS</span><h1>Cuenca delimitada</h1><p>{jobId ? `Proceso ${jobId.slice(0, 8)}` : 'Todavía no hay un proceso calculado.'}</p></div>
-          <section className="results-section">{resultMetrics}</section>
-          <div className="run-area"><button className="secondary-button wide" onClick={() => setActiveView('analysis')}><SlidersHorizontal size={14} /> Ajustar análisis</button></div>
-        </div>
-      )
-    }
+    if (activeView === 'results') return (
+      <div className="inspector-content">
+        <div className="inspector-header"><span className="section-label">RESULTADOS</span><h1>Cuenca delimitada</h1><p>{jobId ? `Proceso ${jobId.slice(0, 8)}` : 'Todavía no hay un proceso calculado.'}</p></div>
+        <section className="results-section">{resultMetrics}</section>
+        <div className="run-area"><button className="secondary-button wide" onClick={() => setActiveView('analysis')}><SlidersHorizontal size={14} /> Ajustar análisis</button></div>
+      </div>
+    )
 
-    if (activeView === 'data') {
-      return (
-        <div className="inspector-content">
-          <div className="inspector-header"><span className="section-label">DATOS</span><h1>Entradas y capas</h1><p>Información disponible para el proyecto actual.</p></div>
-          <section className="form-section data-list">
-            <div><span>DEM</span><strong>{file?.name || 'No cargado'}</strong></div>
-            <div><span>Tamaño</span><strong>{fileSize || '—'}</strong></div>
-            <div><span>Cuenca</span><strong>{watershedGeoJson ? 'Disponible' : 'Pendiente'}</strong></div>
-            <div><span>Drenaje</span><strong>{drainageGeoJson ? 'Disponible' : 'Pendiente'}</strong></div>
-          </section>
-        </div>
-      )
-    }
+    if (activeView === 'data') return (
+      <div className="inspector-content">
+        <div className="inspector-header"><span className="section-label">DATOS</span><h1>Entradas y capas</h1><p>Información disponible para el proyecto actual.</p></div>
+        <section className="form-section">{demInfo || <div className="empty-state"><Mountain size={18} /><span>Carga un DEM para ver sus metadatos.</span></div>}</section>
+      </div>
+    )
 
-    if (activeView === 'settings') {
-      return (
-        <div className="inspector-content">
-          <div className="inspector-header"><span className="section-label">CONFIGURACIÓN</span><h1>Parámetros</h1><p>Valores por defecto del análisis hidrológico.</p></div>
-          <section className="form-section">
-            <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="0.1" /></label>
-            <label className="field">Resolución del DEM (m)<input value={resolutionM} onChange={(e) => setResolutionM(e.target.value)} type="number" min="0.1" step="0.1" /></label>
-            <div className="calculation-row"><span>Umbral equivalente</span><strong>{thresholdCells.toLocaleString()} celdas</strong></div>
-          </section>
-          <div className="run-area"><button className="secondary-button wide" onClick={newProject}><RotateCcw size={14} /> Restablecer proyecto</button></div>
-        </div>
-      )
-    }
+    if (activeView === 'settings') return (
+      <div className="inspector-content">
+        <div className="inspector-header"><span className="section-label">CONFIGURACIÓN</span><h1>Parámetros</h1><p>Valores por defecto del análisis hidrológico.</p></div>
+        <section className="form-section">
+          <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="0.1" /></label>
+          <label className="field">Resolución del DEM (m)<input value={resolutionM} onChange={(e) => setResolutionM(e.target.value)} type="number" min="0.1" step="0.1" /></label>
+          <div className="calculation-row"><span>Umbral equivalente</span><strong>{thresholdCells.toLocaleString()} celdas</strong></div>
+        </section>
+        <div className="run-area"><button className="secondary-button wide" onClick={newProject}><RotateCcw size={14} /> Restablecer proyecto</button></div>
+      </div>
+    )
 
     return (
       <>
         <form onSubmit={runAnalysis}>
-          <div className="inspector-header">
-            <span className="section-label">ENTRADA</span>
-            <h1>Delimitación de cuenca</h1>
-            <p>Carga el DEM, selecciona el punto de salida en el mapa y ejecuta el análisis.</p>
-          </div>
-
+          <div className="inspector-header"><span className="section-label">ENTRADA</span><h1>Delimitación de cuenca</h1><p>Carga el DEM, comprueba dónde está y selecciona el punto de salida.</p></div>
           <section className="form-section">
             <label className={`upload-row ${file ? 'ready' : ''}`}>
               <input type="file" accept=".tif,.tiff" onChange={onFile} />
               <FileUp size={16} />
-              <div><strong>{file?.name || 'Seleccionar GeoTIFF'}</strong><span>{file ? fileSize : '.tif o .tiff'}</span></div>
+              <div><strong>{file?.name || 'Seleccionar GeoTIFF'}</strong><span>{previewLoading ? 'Leyendo extensión…' : file ? fileSize : '.tif o .tiff'}</span></div>
             </label>
           </section>
-
+          {demPreview && <section className="form-section"><div className="form-section-heading"><strong>Extensión del DEM</strong><span>{demPreview.crs}</span></div>{demInfo}<p className="helper">El mapa ya hizo zoom a esta extensión. La imagen gris corresponde a las elevaciones del DEM.</p></section>}
           <section className="form-section">
             <div className="form-section-heading"><strong>Exutorio</strong><span>EPSG:4326</span></div>
             <div className="field-grid">
               <label>Longitud<input value={outlet.lng} onChange={(e) => setOutlet((p) => ({ ...p, lng: Number(e.target.value) }))} type="number" step="any" /></label>
               <label>Latitud<input value={outlet.lat} onChange={(e) => setOutlet((p) => ({ ...p, lat: Number(e.target.value) }))} type="number" step="any" /></label>
             </div>
-            <p className="helper">También puedes definirlo haciendo clic directamente sobre el mapa.</p>
+            <p className="helper">Haz clic dentro del DEM, idealmente sobre el cauce en el punto hasta donde quieres delimitar la cuenca.</p>
           </section>
-
           <section className="form-section">
             <div className="form-section-heading"><strong>Red de drenaje</strong><span>D8</span></div>
             <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="0.1" /></label>
-            <label className="field">Resolución del DEM (m)<input value={resolutionM} onChange={(e) => setResolutionM(e.target.value)} type="number" min="0.1" step="0.1" /></label>
+            <label className="field">Resolución para umbral (m)<input value={resolutionM} onChange={(e) => setResolutionM(e.target.value)} type="number" min="0.1" step="0.1" /></label>
             <div className="calculation-row"><span>Umbral equivalente</span><strong>{thresholdCells.toLocaleString()} celdas</strong></div>
           </section>
-
           {error && <div className="error-box">{error}</div>}
-
-          <div className="run-area">
-            <button className="primary-button" disabled={loading}>
-              <Play size={14} fill="currentColor" /> {loading ? 'Procesando…' : 'Ejecutar análisis'}
-            </button>
-          </div>
+          <div className="run-area"><button className="primary-button" disabled={loading || previewLoading}><Play size={14} fill="currentColor" /> {loading ? 'Procesando…' : 'Ejecutar análisis'}</button></div>
         </form>
-        <section className="results-section">
-          <div className="form-section-heading"><strong>Resultados</strong><span>{summary ? 'Calculados' : 'Pendientes'}</span></div>
-          {resultMetrics}
-        </section>
+        <section className="results-section"><div className="form-section-heading"><strong>Resultados</strong><span>{summary ? 'Calculados' : 'Pendientes'}</span></div>{resultMetrics}</section>
       </>
     )
   }
 
   const layerRows = [
     { name: 'Mapa base', available: true },
-    { name: 'DEM', available: false },
+    { name: 'DEM', available: Boolean(demPreview) },
     { name: 'Hillshade', available: false },
     { name: 'DEM corregido', available: false },
     { name: 'Dirección de flujo', available: false },
@@ -335,6 +311,8 @@ export default function App() {
     { name: 'Red de drenaje', available: Boolean(drainageGeoJson) },
     { name: 'Exutorio', available: true },
   ]
+
+  const demBounds = demPreview ? [[demPreview.bounds_wgs84.south, demPreview.bounds_wgs84.west], [demPreview.bounds_wgs84.north, demPreview.bounds_wgs84.east]] as L.LatLngBoundsExpression : null
 
   return (
     <div className={`hydro-shell ${showInspector ? '' : 'inspector-hidden'}`}>
@@ -351,100 +329,39 @@ export default function App() {
       </aside>
 
       <aside className="module-sidebar">
-        <div className="module-title">
-          <div><strong>HydroBasin</strong><span>Watershed Studio</span></div>
-          <button className="icon-button" title="Nuevo proyecto" onClick={newProject}><Plus size={14} /></button>
-        </div>
-
-        <div className="sidebar-section">
-          <div className="section-label">PROYECTO</div>
-          <button className="nav-row active" onClick={() => setActiveView('analysis')}><MapIcon size={15} /><span>Cuenca sin título</span></button>
-        </div>
-
+        <div className="module-title"><div><strong>HydroBasin</strong><span>Watershed Studio</span></div><button className="icon-button" title="Nuevo proyecto" onClick={newProject}><Plus size={14} /></button></div>
+        <div className="sidebar-section"><div className="section-label">PROYECTO</div><button className="nav-row active" onClick={() => setActiveView('analysis')}><MapIcon size={15} /><span>Cuenca sin título</span></button></div>
         <div className="sidebar-section workflow-list">
           <div className="section-label">FLUJO DE TRABAJO</div>
           {workflow.map(({ label, icon: Icon }, index) => {
             const done = summary ? index <= 8 : file ? index <= activeStep : index === 0
-            return (
-              <button
-                key={label}
-                className={`workflow-row ${index === activeStep ? 'active' : ''}`}
-                onClick={() => { setActiveStep(index); setActiveView('analysis') }}
-              >
-                <span className={`step-dot ${done ? 'done' : ''}`}>{index + 1}</span>
-                <Icon size={14} />
-                <span>{label}</span>
-              </button>
-            )
+            return <button key={label} className={`workflow-row ${index === activeStep ? 'active' : ''}`} onClick={() => { setActiveStep(index); setActiveView('analysis') }}><span className={`step-dot ${done ? 'done' : ''}`}>{index + 1}</span><Icon size={14} /><span>{label}</span></button>
           })}
         </div>
-
         <div className="sidebar-section layer-list">
           <div className="section-label">CAPAS</div>
-          {layerRows.map(({ name, available }) => (
-            <label className={`layer-row ${available ? '' : 'disabled'}`} key={name} title={available ? name : 'Esta capa web se implementará en la siguiente etapa'}>
-              <input
-                type="checkbox"
-                checked={layers[name]}
-                disabled={!available}
-                onChange={(event) => setLayers((current) => ({ ...current, [name]: event.target.checked }))}
-              />
-              <span>{name}</span>
-              {!available && <small>Pend.</small>}
-            </label>
-          ))}
+          {layerRows.map(({ name, available }) => <label className={`layer-row ${available ? '' : 'disabled'}`} key={name}><input type="checkbox" checked={layers[name]} disabled={!available} onChange={(e) => setLayers((current) => ({ ...current, [name]: e.target.checked }))} /><span>{name}</span>{!available && <small>Pend.</small>}</label>)}
         </div>
       </aside>
 
       <main className="workspace-shell">
-        <header className="topbar">
-          <div className="breadcrumbs">
-            <span>HydroBasin</span><ChevronRight size={12} /><strong>{viewLabels[activeView]}</strong>
-          </div>
-          <div className="topbar-actions">
-            <span className="engine-status"><i /> Motor listo</span>
-            <button className="secondary-button" onClick={() => setShowInspector((value) => !value)}><SlidersHorizontal size={14} /> {showInspector ? 'Ocultar panel' : 'Mostrar panel'}</button>
-          </div>
-        </header>
-
+        <header className="topbar"><div className="breadcrumbs"><span>HydroBasin</span><ChevronRight size={12} /><strong>{viewLabels[activeView]}</strong></div><div className="topbar-actions"><span className="engine-status"><i /> Motor listo</span><button className="secondary-button" onClick={() => setShowInspector((value) => !value)}><SlidersHorizontal size={14} /> {showInspector ? 'Ocultar panel' : 'Mostrar panel'}</button></div></header>
         <div className="workspace-grid">
           <section className="map-workspace">
-            <div className="map-toolbar">
-              <div><MapIcon size={14} /><strong>Vista geográfica</strong></div>
-              <span>Haz clic para definir el exutorio · WGS 84</span>
-            </div>
+            <div className="map-toolbar"><div><MapIcon size={14} /><strong>Vista geográfica</strong></div><span>{demPreview ? `DEM: ${demPreview.filename}` : 'Carga un GeoTIFF para ver su extensión'}</span></div>
             <MapContainer center={[outlet.lat, outlet.lng]} zoom={11} className="map-canvas" zoomControl>
-              {layers['Mapa base'] && (
-                <TileLayer
-                  attribution="&copy; OpenStreetMap contributors"
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-              )}
+              {layers['Mapa base'] && <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />}
               <MapClickHandler onPick={pickOutlet} />
-              {layers.Exutorio && (
-                <CircleMarker
-                  center={[outlet.lat, outlet.lng]}
-                  radius={7}
-                  pathOptions={{ color: '#1f9d8f', weight: 2, fillColor: '#1f9d8f', fillOpacity: 0.35 }}
-                >
-                  <Popup><strong>Exutorio seleccionado</strong><br />{outlet.lat.toFixed(6)}, {outlet.lng.toFixed(6)}</Popup>
-                </CircleMarker>
-              )}
-              {layers.Cuenca && watershedGeoJson && (
-                <GeoJSON key={`watershed-${jobId}`} data={watershedGeoJson as any} style={{ color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.12 }} />
-              )}
-              {layers['Red de drenaje'] && drainageGeoJson && (
-                <GeoJSON key={`drainage-${jobId}`} data={drainageGeoJson as any} style={{ color: '#3b82f6', weight: 2, opacity: 0.9 }} />
-              )}
-              {watershedGeoJson && <FitToResult data={watershedGeoJson} />}
+              {demPreview && layers.DEM && demBounds && <ImageOverlay url={demPreview.preview_data_url} bounds={demBounds} opacity={0.62} />}
+              {demPreview && <FitToDem preview={demPreview} />}
+              {layers.Exutorio && <CircleMarker center={[outlet.lat, outlet.lng]} radius={7} pathOptions={{ color: '#1f9d8f', weight: 2, fillColor: '#1f9d8f', fillOpacity: 0.35 }}><Popup><strong>Exutorio seleccionado</strong><br />{outlet.lat.toFixed(6)}, {outlet.lng.toFixed(6)}</Popup></CircleMarker>}
+              {layers.Cuenca && watershedGeoJson && <GeoJSON key={`watershed-${jobId}`} data={watershedGeoJson as any} style={{ color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.12 }} />}
+              {layers['Red de drenaje'] && drainageGeoJson && <GeoJSON key={`drainage-${jobId}`} data={drainageGeoJson as any} style={{ color: '#3b82f6', weight: 2, opacity: 0.9 }} />}
+              {watershedGeoJson && <FitToGeoJson data={watershedGeoJson} />}
               <ScaleControl position="bottomleft" imperial={false} />
             </MapContainer>
-            <div className="map-readout">
-              <span>Exutorio</span>
-              <strong>{outlet.lat.toFixed(5)}, {outlet.lng.toFixed(5)}</strong>
-            </div>
+            <div className="map-readout"><span>{demPreview ? 'Exutorio · dentro del DEM' : 'Exutorio'}</span><strong>{outlet.lat.toFixed(5)}, {outlet.lng.toFixed(5)}</strong></div>
           </section>
-
           {showInspector && <aside className="inspector">{renderInspector()}</aside>}
         </div>
       </main>
