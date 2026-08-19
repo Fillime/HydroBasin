@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -24,6 +25,34 @@ def _save(fig, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
+
+
+def _find_pdflatex() -> str | None:
+    """Encuentra pdflatex incluso cuando Uvicorn no hereda el PATH actualizado de Windows."""
+    found = shutil.which("pdflatex")
+    if found:
+        return found
+
+    candidates: list[Path] = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    program_files = os.environ.get("ProgramFiles")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+
+    if local_app_data:
+        root = Path(local_app_data)
+        candidates.extend([
+            root / "Programs" / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe",
+            root / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe",
+        ])
+    if program_files:
+        candidates.append(Path(program_files) / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe")
+    if program_files_x86:
+        candidates.append(Path(program_files_x86) / "MiKTeX" / "miktex" / "bin" / "pdflatex.exe")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 def generar_figuras(
@@ -194,24 +223,37 @@ El área mínima de aporte controla la densidad de la red extraída. Valores men
     tex_path.write_text(tex, encoding="utf-8")
 
     pdf_path = output_dir / "informe_hydrobasin.pdf"
+    pdflatex = _find_pdflatex()
     compiled = False
-    pdflatex = shutil.which("pdflatex")
+    compile_error: str | None = None
+
     if pdflatex:
         try:
-            subprocess.run(
-                [pdflatex, "-interaction=nonstopmode", tex_path.name],
+            completed = subprocess.run(
+                [pdflatex, "-interaction=nonstopmode", "-halt-on-error", tex_path.name],
                 cwd=output_dir,
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
             )
-            compiled = pdf_path.exists()
-        except Exception:
-            compiled = False
+            compiled = completed.returncode == 0 and pdf_path.exists()
+            if not compiled:
+                output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+                lines = [line.strip() for line in output.splitlines() if line.strip()]
+                compile_error = " | ".join(lines[-8:])[-1800:] or f"pdflatex terminó con código {completed.returncode}."
+        except subprocess.TimeoutExpired:
+            compile_error = "La compilación de LaTeX superó el tiempo máximo de 120 segundos. MiKTeX puede estar esperando instalar un paquete faltante."
+        except Exception as exc:
+            compile_error = str(exc)
 
     return {
         "tex": tex_path.name,
         "pdf": pdf_path.name if compiled else None,
         "compiled": compiled,
+        "compiler_found": bool(pdflatex),
+        "compiler_path": pdflatex,
+        "compile_error": compile_error,
     }
