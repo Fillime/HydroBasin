@@ -34,6 +34,7 @@ def run_watershed_analysis(
     drainage_threshold: float | None = None,
     minimum_area_km2: float | None = None,
     snap_threshold: float | None = None,
+    dem_source: str | None = None,
     progress: ProgressCallback | None = None,
 ) -> dict:
     def report(level: str, message: str, percent: int) -> None:
@@ -135,6 +136,7 @@ def run_watershed_analysis(
     report("info", "Calculando parámetros morfométricos…", 90)
     metrics = parametros_morfometricos(watershed)
     summary = {
+        "dem_source": dem_source or "GeoTIFF cargado por el usuario",
         "crs_dem": metadata["crs"],
         "dem_width": metadata["width"],
         "dem_height": metadata["height"],
