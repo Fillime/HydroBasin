@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Callable
 
 ENGINE_ROOT = Path(__file__).resolve().parents[3] / "engine"
 if str(ENGINE_ROOT) not in sys.path:
@@ -17,6 +18,7 @@ def analyze_dem(
     point_crs: str,
     threshold: float,
     output_dir: Path,
+    progress: Callable[[str, str, int], None] | None = None,
 ) -> dict:
     return run_watershed_analysis(
         dem_path=dem_path,
@@ -25,4 +27,5 @@ def analyze_dem(
         point_crs=point_crs,
         output_dir=output_dir,
         drainage_threshold=threshold,
+        progress=progress,
     )
