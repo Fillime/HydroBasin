@@ -1,14 +1,113 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from uuid import uuid4
 
+import numpy as np
+import rasterio
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from rasterio.io import MemoryFile
+from rasterio.warp import transform_bounds
 
 from app.core.config import settings
 from app.services.hydro_service import analyze_dem
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+
+def _validate_dem(dem: UploadFile) -> None:
+    if not dem.filename or not dem.filename.lower().endswith((".tif", ".tiff")):
+        raise HTTPException(status_code=400, detail="El DEM debe ser un GeoTIFF (.tif o .tiff).")
+
+
+@router.post("/dem-preview")
+async def dem_preview(dem: UploadFile = File(...)):
+    _validate_dem(dem)
+
+    preview_id = uuid4().hex
+    preview_dir = settings.workspace_dir / "previews" / preview_id
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    dem_path = preview_dir / Path(dem.filename).name
+    dem_path.write_bytes(await dem.read())
+
+    try:
+        with rasterio.open(dem_path) as src:
+            if src.crs is None:
+                raise ValueError("El GeoTIFF no tiene un sistema de referencia (CRS) definido.")
+
+            west, south, east, north = transform_bounds(
+                src.crs,
+                "EPSG:4326",
+                *src.bounds,
+                densify_pts=21,
+            )
+
+            scale = min(1.0, 900 / max(src.width, src.height))
+            preview_width = max(1, int(src.width * scale))
+            preview_height = max(1, int(src.height * scale))
+            band = src.read(
+                1,
+                out_shape=(preview_height, preview_width),
+                masked=True,
+                resampling=rasterio.enums.Resampling.bilinear,
+            )
+
+            valid = band.compressed().astype("float64")
+            valid = valid[np.isfinite(valid)]
+            if valid.size == 0:
+                raise ValueError("El DEM no contiene valores de elevación válidos.")
+
+            low, high = np.percentile(valid, [2, 98])
+            if high <= low:
+                low = float(valid.min())
+                high = float(valid.max())
+            if high <= low:
+                high = low + 1.0
+
+            data = np.asarray(band.filled(low), dtype="float64")
+            normalized = np.clip((data - low) / (high - low), 0, 1)
+            image = (normalized * 255).astype("uint8")
+
+            with MemoryFile() as memory_file:
+                with memory_file.open(
+                    driver="PNG",
+                    width=preview_width,
+                    height=preview_height,
+                    count=1,
+                    dtype="uint8",
+                ) as dst:
+                    dst.write(image, 1)
+                png_bytes = memory_file.read()
+
+            preview_data_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
+
+            return {
+                "filename": dem.filename,
+                "crs": src.crs.to_string(),
+                "width": src.width,
+                "height": src.height,
+                "resolution": [abs(float(src.res[0])), abs(float(src.res[1]))],
+                "bounds_native": {
+                    "west": float(src.bounds.left),
+                    "south": float(src.bounds.bottom),
+                    "east": float(src.bounds.right),
+                    "north": float(src.bounds.top),
+                },
+                "bounds_wgs84": {
+                    "west": float(west),
+                    "south": float(south),
+                    "east": float(east),
+                    "north": float(north),
+                },
+                "elevation_min": float(valid.min()),
+                "elevation_max": float(valid.max()),
+                "preview_data_url": preview_data_url,
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/watershed")
@@ -19,8 +118,7 @@ async def watershed_analysis(
     point_crs: str = Form("EPSG:4326"),
     threshold: float = Form(1000),
 ):
-    if not dem.filename or not dem.filename.lower().endswith((".tif", ".tiff")):
-        raise HTTPException(status_code=400, detail="El DEM debe ser un GeoTIFF (.tif o .tiff).")
+    _validate_dem(dem)
     if threshold <= 0:
         raise HTTPException(status_code=400, detail="El umbral debe ser mayor que cero.")
 
