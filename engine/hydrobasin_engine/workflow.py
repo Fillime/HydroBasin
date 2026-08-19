@@ -10,6 +10,7 @@ from .dem import cargar_dem, corregir_dem, metadatos_dem, umbral_celdas_desde_ar
 from .delineation import ajustar_punto_salida, delimitar_cuenca, transformar_punto
 from .hydrology import acumulacion_flujo, direccion_flujo, orden_strahler
 from .io import guardar_raster, guardar_shapefile_zip, guardar_vector, mascara_a_poligono
+from .main_channel import extraer_cauce_principal, tiempos_concentracion
 from .morphometry import parametros_morfometricos
 from .report import generar_figuras, generar_informes
 from .streams import extraer_red_vectorial
@@ -106,9 +107,27 @@ def run_watershed_analysis(
     report("info", "Calculando el orden de corrientes de Strahler…", 76)
     strahler = orden_strahler(grid, flow_direction, accumulation, drainage_threshold)
     strahler_max = int(np.asarray(strahler).max()) if np.asarray(strahler).size else 0
-    report("ok", f"Orden de Strahler calculado · orden máximo {strahler_max}.", 80)
+    report("ok", f"Orden de Strahler calculado · orden máximo {strahler_max}.", 79)
 
-    report("info", "Delimitando subcuencas internas a partir de confluencias D8…", 82)
+    report("info", "Trazando cauce principal y perfil longitudinal…", 80)
+    main_channel, channel_metrics = extraer_cauce_principal(
+        flow_direction,
+        accumulation,
+        watershed_mask,
+        corrected_dem,
+        metadata["transform"],
+        metadata["crs"],
+        x_snap,
+        y_snap,
+    )
+    if not main_channel.empty:
+        guardar_vector(main_channel, output_dir / "cauce_principal.gpkg")
+        guardar_shapefile_zip(main_channel, output_dir / "cauce_principal_shp.zip", "cauce_principal")
+        report("ok", f"Cauce principal trazado · {channel_metrics['main_channel_length_km']:.2f} km.", 82)
+    else:
+        report("warning", "No fue posible trazar un cauce principal continuo.", 82)
+
+    report("info", "Delimitando subcuencas internas a partir de confluencias D8…", 83)
     subbasin_labels, subbasins = delimitar_subcuencas(
         flow_direction,
         accumulation,
@@ -133,8 +152,22 @@ def run_watershed_analysis(
     guardar_raster(output_dir / "strahler.tif", strahler, dem_path, nodata=0)
     guardar_raster(output_dir / "subcuencas.tif", subbasin_labels.astype("int32"), dem_path, nodata=0)
 
-    report("info", "Calculando parámetros morfométricos…", 90)
-    metrics = parametros_morfometricos(watershed)
+    report("info", "Calculando parámetros morfométricos e hidrológicos…", 90)
+    metrics = parametros_morfometricos(watershed, drainage=drainage)
+    tc_metrics = tiempos_concentracion(
+        channel_metrics.get("main_channel_length_km"),
+        channel_metrics.get("main_channel_slope"),
+    )
+
+    basin_values = np.asarray(corrected_dem, dtype="float64")[np.asarray(watershed_mask).astype(bool)]
+    basin_values = basin_values[np.isfinite(basin_values)]
+    relief_metrics = {
+        "elevacion_min_m": float(basin_values.min()) if basin_values.size else None,
+        "elevacion_max_m": float(basin_values.max()) if basin_values.size else None,
+        "elevacion_media_m": float(basin_values.mean()) if basin_values.size else None,
+        "relieve_cuenca_m": float(basin_values.max() - basin_values.min()) if basin_values.size else None,
+    }
+
     summary = {
         "dem_source": dem_source or "GeoTIFF cargado por el usuario",
         "crs_dem": metadata["crs"],
@@ -149,9 +182,12 @@ def run_watershed_analysis(
         "strahler_max": strahler_max,
         "subbasin_count": subbasin_count,
         **metrics,
+        **channel_metrics,
+        **tc_metrics,
+        **relief_metrics,
     }
 
-    report("info", "Generando cartografía técnica enfocada a la cuenca…", 92)
+    report("info", "Generando cartografía, perfil y plano técnico…", 92)
     figures = generar_figuras(
         output_dir,
         grid,
@@ -163,27 +199,36 @@ def run_watershed_analysis(
         watershed,
         drainage,
         subbasins=subbasins,
+        main_channel=main_channel,
+        summary=summary,
     )
-    report("ok", "Cartografía de DEM, relieve, acumulación, drenaje, Strahler y subcuencas generada.", 96)
+    report("ok", "Cartografía, perfil longitudinal y plano base generados.", 96)
 
-    report("info", "Generando fuente LaTeX y compilando el PDF con Tectonic…", 97)
-    report_files = generar_informes(output_dir, summary, figures, subbasins=subbasins)
+    report("info", "Generando informe y plano PDF desde LaTeX con Tectonic…", 97)
+    report_files = generar_informes(
+        output_dir,
+        summary,
+        figures,
+        subbasins=subbasins,
+        main_channel=main_channel,
+    )
     if report_files.get("compiled"):
-        report("ok", "Informe PDF compilado correctamente desde LaTeX con Tectonic.", 99)
+        report("ok", "Informe PDF y plano hidrográfico compilados desde LaTeX con Tectonic.", 99)
     elif report_files.get("compiler_found"):
         detail = report_files.get("compile_error") or "Error de compilación no especificado."
-        report("warning", f"La fuente .tex fue generada, pero Tectonic no pudo compilar el PDF: {detail}", 99)
+        report("warning", f"Se generó LaTeX, pero Tectonic no pudo compilar todos los PDF: {detail}", 99)
     else:
-        report("warning", "La fuente .tex fue generada, pero Tectonic no está disponible en el entorno del backend. Reinstala requirements.txt.", 99)
+        report("warning", "Se generó LaTeX, pero Tectonic no está disponible en el backend.", 99)
 
     result = {
         "summary": summary,
         "watershed_geojson": _geojson_web(watershed),
         "drainage_geojson": _geojson_web(drainage),
         "subbasins_geojson": _geojson_web(subbasins),
+        "main_channel_geojson": _geojson_web(main_channel),
         "figures": figures,
         "report": report_files,
     }
     (output_dir / "resumen.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    report("ok", "Análisis completado. Cuenca, subcuencas, diagramas e informe listos.", 100)
+    report("ok", "Análisis completado. Informe, plano, perfiles y capas GIS listos.", 100)
     return result
