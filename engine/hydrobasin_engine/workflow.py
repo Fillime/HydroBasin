@@ -13,6 +13,7 @@ from .io import guardar_raster, guardar_vector, mascara_a_poligono
 from .morphometry import parametros_morfometricos
 from .report import generar_figuras, generar_informes
 from .streams import extraer_red_vectorial
+from .subbasins import delimitar_subcuencas
 
 ProgressCallback = Callable[[str, str, int], None]
 
@@ -66,50 +67,67 @@ def run_watershed_analysis(
 
     report("info", "Corrigiendo pits, depresiones y zonas planas del DEM…", 17)
     corrected_dem = corregir_dem(grid, dem)
-    report("ok", "Corrección hidrológica del DEM completada.", 29)
+    report("ok", "Corrección hidrológica del DEM completada.", 27)
 
-    report("info", "Calculando la dirección de flujo mediante el método D8…", 32)
+    report("info", "Calculando la dirección de flujo mediante el método D8…", 30)
     flow_direction = direccion_flujo(grid, corrected_dem)
-    report("ok", "Dirección de flujo calculada.", 39)
+    report("ok", "Dirección de flujo calculada.", 36)
 
-    report("info", "Calculando la acumulación de flujo en cada celda…", 42)
+    report("info", "Calculando la acumulación de flujo en cada celda…", 39)
     accumulation = acumulacion_flujo(grid, flow_direction)
-    report("ok", "Acumulación de flujo calculada.", 50)
+    report("ok", "Acumulación de flujo calculada.", 47)
 
     x_dem, y_dem = transformar_punto(x, y, point_crs, metadata["crs"])
     minimum_accumulation = snap_threshold or drainage_threshold
-    report("info", "Ajustando el exutorio a una celda de alta acumulación cercana…", 53)
+    report("info", "Ajustando el exutorio a una celda de alta acumulación cercana…", 50)
     x_snap, y_snap = ajustar_punto_salida(grid, accumulation, x_dem, y_dem, minimum_accumulation)
-    report("ok", "Exutorio ajustado a la red de flujo.", 57)
+    report("ok", "Exutorio ajustado a la red de flujo.", 54)
 
-    report("info", "Delimitando la cuenca aportante al exutorio…", 60)
+    report("info", "Delimitando la cuenca aportante al exutorio…", 57)
     watershed_mask = delimitar_cuenca(grid, flow_direction, x_snap, y_snap)
-    report("ok", "Cuenca hidrográfica delimitada.", 67)
+    report("ok", "Cuenca hidrográfica principal delimitada.", 63)
 
-    report("info", "Vectorizando el límite de la cuenca…", 69)
+    report("info", "Vectorizando el límite de la cuenca…", 65)
     watershed = mascara_a_poligono(watershed_mask, dem_path)
     guardar_vector(watershed, output_dir / "cuenca.gpkg")
-    report("ok", "Polígono de cuenca generado.", 73)
+    report("ok", "Polígono de cuenca generado.", 68)
 
-    report("info", f"Extrayendo red de drenaje · umbral {drainage_threshold:,.0f} celdas…", 75)
+    report("info", f"Extrayendo red de drenaje · umbral {drainage_threshold:,.0f} celdas…", 70)
     drainage = extraer_red_vectorial(grid, flow_direction, accumulation, drainage_threshold, crs=metadata["crs"])
     if not drainage.empty:
         guardar_vector(drainage, output_dir / "red_drenaje.gpkg")
-        report("ok", f"Red de drenaje generada · {len(drainage)} segmentos.", 79)
+        report("ok", f"Red de drenaje generada · {len(drainage)} segmentos.", 74)
     else:
-        report("warning", "No se generaron segmentos con el umbral actual.", 79)
+        report("warning", "No se generaron segmentos con el umbral actual.", 74)
 
-    report("info", "Calculando el orden de corrientes de Strahler…", 81)
+    report("info", "Calculando el orden de corrientes de Strahler…", 76)
     strahler = orden_strahler(grid, flow_direction, accumulation, drainage_threshold)
     strahler_max = int(np.asarray(strahler).max()) if np.asarray(strahler).size else 0
-    report("ok", f"Orden de Strahler calculado · orden máximo {strahler_max}.", 85)
+    report("ok", f"Orden de Strahler calculado · orden máximo {strahler_max}.", 80)
 
-    report("info", "Guardando rásteres técnicos…", 87)
+    report("info", "Delimitando subcuencas internas a partir de confluencias D8…", 82)
+    subbasin_labels, subbasins = delimitar_subcuencas(
+        flow_direction,
+        accumulation,
+        watershed_mask,
+        metadata["transform"],
+        metadata["crs"],
+        drainage_threshold,
+    )
+    subbasin_count = int(len(subbasins))
+    if subbasin_count:
+        guardar_vector(subbasins, output_dir / "subcuencas.gpkg")
+        report("ok", f"Subcuencas generadas · {subbasin_count} unidades internas.", 86)
+    else:
+        report("warning", "No se pudieron generar subcuencas con el umbral actual.", 86)
+
+    report("info", "Guardando rásteres técnicos…", 88)
     guardar_raster(output_dir / "dem_corregido.tif", corrected_dem, dem_path)
     guardar_raster(output_dir / "direccion_flujo.tif", flow_direction, dem_path)
     guardar_raster(output_dir / "acumulacion_flujo.tif", accumulation, dem_path)
     guardar_raster(output_dir / "cuenca_mask.tif", watershed_mask.astype("uint8"), dem_path, nodata=0)
     guardar_raster(output_dir / "strahler.tif", strahler, dem_path, nodata=0)
+    guardar_raster(output_dir / "subcuencas.tif", subbasin_labels.astype("int32"), dem_path, nodata=0)
 
     report("info", "Calculando parámetros morfométricos…", 90)
     metrics = parametros_morfometricos(watershed)
@@ -124,10 +142,11 @@ def run_watershed_analysis(
         "drainage_threshold": float(drainage_threshold),
         "minimum_area_km2": minimum_area_km2,
         "strahler_max": strahler_max,
+        "subbasin_count": subbasin_count,
         **metrics,
     }
 
-    report("info", "Generando diagramas técnicos a 200 DPI…", 93)
+    report("info", "Generando cartografía técnica enfocada a la cuenca…", 92)
     figures = generar_figuras(
         output_dir,
         grid,
@@ -138,21 +157,23 @@ def run_watershed_analysis(
         strahler,
         watershed,
         drainage,
+        subbasins=subbasins,
     )
-    report("ok", "DEM, hillshade, acumulación, cuenca y Strahler exportados como figuras.", 96)
+    report("ok", "Cartografía de DEM, relieve, acumulación, drenaje, Strahler y subcuencas generada.", 96)
 
-    report("info", "Generando informe técnico en PDF…", 97)
-    report_files = generar_informes(output_dir, summary, figures)
+    report("info", "Maquetando informe técnico profesional en PDF…", 97)
+    report_files = generar_informes(output_dir, summary, figures, subbasins=subbasins)
     report_files["compiled"] = True
-    report("ok", "Informe PDF generado directamente. Fuente LaTeX disponible como exportación opcional.", 99)
+    report("ok", "Informe PDF generado. Fuente LaTeX disponible como exportación opcional.", 99)
 
     result = {
         "summary": summary,
         "watershed_geojson": _geojson_web(watershed),
         "drainage_geojson": _geojson_web(drainage),
+        "subbasins_geojson": _geojson_web(subbasins),
         "figures": figures,
         "report": report_files,
     }
     (output_dir / "resumen.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    report("ok", "Análisis completado. Resultados, diagramas e informe listos.", 100)
+    report("ok", "Análisis completado. Cuenca, subcuencas, diagramas e informe listos.", 100)
     return result
