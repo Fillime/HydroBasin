@@ -143,6 +143,7 @@ def run_watershed_analysis(
 
     report("info", "Generando informe técnico en PDF…", 97)
     report_files = generar_informes(output_dir, summary, figures)
+    report_files["compiled"] = True
     report("ok", "Informe PDF generado directamente. Fuente LaTeX disponible como exportación opcional.", 99)
 
     result = {
