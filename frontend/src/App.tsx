@@ -322,11 +322,11 @@ export default function App() {
 
   const drainageControl = (
     <>
-      <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="0.1" /></label>
+      <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="any" inputMode="decimal" /></label>
       <div className="preset-row">
         {[1, 5, 10, 25].map((value) => <button type="button" key={value} className={Number(minimumAreaKm2) === value ? 'active' : ''} onClick={() => setMinimumAreaKm2(String(value))}>{value} km²</button>)}
       </div>
-      <p className="helper">HydroBasin calcula automáticamente cuántas celdas corresponden a esta área usando el CRS y la resolución real del DEM. Si la red sale demasiado densa, aumenta este valor.</p>
+      <p className="helper">Puedes usar valores enteros o decimales, por ejemplo 1, 2.5, 5 o 10 km². HydroBasin calcula automáticamente cuántas celdas corresponden a esta área usando el CRS y la resolución real del DEM. Si la red sale demasiado densa, aumenta este valor.</p>
     </>
   )
 
