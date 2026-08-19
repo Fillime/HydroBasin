@@ -12,6 +12,7 @@ from rasterio.io import MemoryFile
 from rasterio.warp import transform_bounds
 
 from app.core.config import settings
+from app.services.auto_dem_service import obtain_adaptive_dem
 from app.services.opentopography_service import download_dem
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -24,9 +25,7 @@ def _preview_from_path(path: Path) -> dict:
         if src.crs is None:
             raise ValueError("El GeoTIFF no tiene un sistema de referencia (CRS) definido.")
 
-        west, south, east, north = transform_bounds(
-            src.crs, "EPSG:4326", *src.bounds, densify_pts=21
-        )
+        west, south, east, north = transform_bounds(src.crs, "EPSG:4326", *src.bounds, densify_pts=21)
         scale = min(1.0, 900 / max(src.width, src.height))
         preview_width = max(1, int(src.width * scale))
         preview_height = max(1, int(src.height * scale))
@@ -108,11 +107,65 @@ async def _run_download(job_id: str, source: str, south: float, north: float, we
             "path": str(target),
             "size_bytes": target.stat().st_size,
             "preview": preview,
+            "mode": "manual_area",
         })
     except Exception as exc:
         if target.exists():
             target.unlink(missing_ok=True)
         _jobs[job_id].update({"status": "error", "message": str(exc)})
+
+
+async def _run_auto_download(job_id: str, source: str, lat: float, lng: float) -> None:
+    job_dir = settings.workspace_dir / "dem_downloads" / job_id
+    _jobs[job_id].update({
+        "status": "processing",
+        "message": "Preparando delimitación automática desde el punto de aforo…",
+        "mode": "outlet_auto",
+    })
+
+    def progress(round_index: int, max_rounds: int, bounds: dict, phase: str) -> None:
+        if phase == "downloading":
+            message = f"Iteración {round_index}/{max_rounds}: descargando DEM preliminar alrededor del punto…"
+        else:
+            message = f"Iteración {round_index}/{max_rounds}: comprobando si la divisoria toca los bordes del DEM…"
+        _jobs[job_id].update({
+            "status": "processing",
+            "message": message,
+            "iteration": round_index,
+            "max_iterations": max_rounds,
+            "current_bounds": bounds,
+        })
+
+    try:
+        path, adaptive = await obtain_adaptive_dem(
+            source=source,
+            lat=lat,
+            lng=lng,
+            destination_dir=job_dir,
+            progress=progress,
+        )
+        _jobs[job_id].update({"status": "processing", "message": "Extensión final encontrada. Generando vista previa…"})
+        preview = await asyncio.to_thread(_preview_from_path, path)
+        contained = bool(adaptive.get("contained"))
+        message = (
+            f"DEM automático listo en {adaptive.get('rounds', 1)} iteración(es). La cuenca preliminar quedó contenida."
+            if contained
+            else "DEM automático listo, pero la cuenca siguió tocando un borde tras el máximo de iteraciones; revisa la extensión antes de analizar."
+        )
+        _jobs[job_id].update({
+            "status": "ready",
+            "message": message,
+            "dem_id": job_id,
+            "source": source,
+            "path": str(path),
+            "size_bytes": path.stat().st_size,
+            "preview": preview,
+            "mode": "outlet_auto",
+            "adaptive": adaptive,
+            "outlet": {"lat": lat, "lng": lng},
+        })
+    except Exception as exc:
+        _jobs[job_id].update({"status": "error", "message": str(exc), "mode": "outlet_auto"})
 
 
 @router.post("/dem-download-jobs")
@@ -129,8 +182,28 @@ async def start_dem_download(
         "message": "Descarga en cola…",
         "dem_id": job_id,
         "source": source,
+        "mode": "manual_area",
     }
     asyncio.create_task(_run_download(job_id, source, south, north, west, east))
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.post("/dem-auto-jobs")
+async def start_auto_dem(
+    source: str = Query("COP30"),
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+):
+    job_id = uuid4().hex
+    _jobs[job_id] = {
+        "status": "queued",
+        "message": "Análisis automático del área en cola…",
+        "dem_id": job_id,
+        "source": source,
+        "mode": "outlet_auto",
+        "outlet": {"lat": lat, "lng": lng},
+    }
+    asyncio.create_task(_run_auto_download(job_id, source, lat, lng))
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -138,7 +211,6 @@ async def start_dem_download(
 def dem_download_status(job_id: str):
     job = _jobs.get(job_id)
     if job is None:
-        # Permite reutilizar un DEM listo incluso después de una recarga si el archivo sigue en workspace.
         job_dir = settings.workspace_dir / "dem_downloads" / job_id
         candidates = list(job_dir.glob("*.tif")) if job_dir.exists() else []
         if candidates:
@@ -162,4 +234,6 @@ def resolve_server_dem(dem_id: str) -> Path:
     candidates = list(job_dir.glob("*.tif")) if job_dir.exists() else []
     if not candidates:
         raise FileNotFoundError("El DEM descargado ya no está disponible en el servidor.")
-    return candidates[0]
+    # Priorizamos el DEM adaptativo final si existe.
+    adaptive = [path for path in candidates if "adaptive" in path.name]
+    return adaptive[0] if adaptive else candidates[0]
