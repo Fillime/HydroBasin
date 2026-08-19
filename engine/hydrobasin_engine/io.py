@@ -41,7 +41,9 @@ def guardar_vector(gdf: gpd.GeoDataFrame, ruta: str | Path):
 
 def guardar_shapefile_zip(gdf: gpd.GeoDataFrame, ruta_zip: str | Path, nombre: str) -> Path:
     """Exporta un GeoDataFrame como ESRI Shapefile y empaqueta todos sus archivos en ZIP."""
-    ruta_zip = Path(ruta_zip)
+    # Normalizar a ruta absoluta evita comparar/mover el mismo ZIP usando una ruta
+    # absoluta y otra relativa (especialmente en Windows).
+    ruta_zip = Path(ruta_zip).resolve()
     ruta_zip.parent.mkdir(parents=True, exist_ok=True)
     temp_dir = ruta_zip.parent / f".{nombre}_shp"
     if temp_dir.exists():
@@ -52,7 +54,10 @@ def guardar_shapefile_zip(gdf: gpd.GeoDataFrame, ruta_zip: str | Path, nombre: s
         shp_path = temp_dir / f"{nombre}.shp"
         gdf.to_file(shp_path, driver="ESRI Shapefile", encoding="UTF-8")
         archive_base = ruta_zip.with_suffix("")
-        created = Path(shutil.make_archive(str(archive_base), "zip", root_dir=temp_dir))
+        created = Path(shutil.make_archive(str(archive_base), "zip", root_dir=temp_dir)).resolve()
+
+        # make_archive normalmente ya crea exactamente ruta_zip. Solo renombrar si
+        # realmente son archivos distintos.
         if created != ruta_zip:
             if ruta_zip.exists():
                 ruta_zip.unlink()
