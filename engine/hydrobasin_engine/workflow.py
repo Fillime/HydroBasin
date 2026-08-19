@@ -11,6 +11,14 @@ from .morphometry import parametros_morfometricos
 from .streams import extraer_red_vectorial
 
 
+def _geojson_web(gdf) -> dict:
+    """Convierte un GeoDataFrame a GeoJSON EPSG:4326 listo para Leaflet."""
+    if gdf is None or gdf.empty:
+        return {"type": "FeatureCollection", "features": []}
+    web = gdf.to_crs("EPSG:4326")
+    return json.loads(web.to_json())
+
+
 def run_watershed_analysis(
     dem_path: str | Path,
     x: float,
@@ -46,17 +54,35 @@ def run_watershed_analysis(
     watershed = mascara_a_poligono(watershed_mask, dem_path)
     guardar_vector(watershed, output_dir / "cuenca.gpkg")
 
-    drainage = extraer_red_vectorial(grid, flow_direction, accumulation, drainage_threshold, crs=metadata["crs"])
+    drainage = extraer_red_vectorial(
+        grid,
+        flow_direction,
+        accumulation,
+        drainage_threshold,
+        crs=metadata["crs"],
+    )
     if not drainage.empty:
         guardar_vector(drainage, output_dir / "red_drenaje.gpkg")
 
     metrics = parametros_morfometricos(watershed)
     summary = {
         "crs_dem": metadata["crs"],
+        "dem_width": metadata["width"],
+        "dem_height": metadata["height"],
+        "dem_resolution": [float(metadata["resolution"][0]), float(metadata["resolution"][1])],
         "outlet_original": {"x": x, "y": y, "crs": point_crs},
         "outlet_snapped": {"x": x_snap, "y": y_snap, "crs": metadata["crs"]},
         "drainage_threshold": drainage_threshold,
         **metrics,
     }
-    (output_dir / "resumen.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    return summary
+
+    result = {
+        "summary": summary,
+        "watershed_geojson": _geojson_web(watershed),
+        "drainage_geojson": _geojson_web(drainage),
+    }
+    (output_dir / "resumen.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return result
