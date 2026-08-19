@@ -86,6 +86,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid color-mix(in srgb
 .map-canvas { flex: 1; min-height: 0; width: 100%; background: #d4d6d5; }
 .leaflet-container { font-family: inherit; }
 .leaflet-bar, .leaflet-control-scale-line { border-color: rgba(0,0,0,.18) !important; box-shadow: none !important; border-radius: 6px !important; }
+.dem-area-resize-handle { background: transparent !important; border: 0 !important; }
+.dem-area-resize-handle span { display: block; width: 14px; height: 14px; border: 2px solid #fff; border-radius: 3px; background: #22c3b6; box-shadow: 0 1px 4px rgba(0,0,0,.45); cursor: nwse-resize; }
 .map-readout { position: absolute; z-index: 500; left: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--hb-border-strong); border-radius: 7px; background: rgba(20,21,23,.92); padding: 7px 9px; backdrop-filter: blur(4px); }
 .map-readout span { color: var(--hb-text-4); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
 .map-readout strong { color: var(--hb-text-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 500; }
