@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 import rasterio
+from pyproj import CRS, Geod, Transformer
 from pysheds.grid import Grid
 
 
@@ -34,3 +36,38 @@ def metadatos_dem(ruta: str | Path) -> dict:
             "nodata": src.nodata,
             "dtype": src.dtypes[0],
         }
+
+
+def resolucion_metrica_aproximada(ruta: str | Path) -> tuple[float, float]:
+    """Devuelve el tamaño aproximado del píxel en metros en el centro del DEM."""
+    with rasterio.open(ruta) as src:
+        if src.crs is None:
+            raise ValueError("El DEM no tiene CRS definido.")
+        crs = CRS.from_user_input(src.crs)
+        rx, ry = abs(float(src.res[0])), abs(float(src.res[1]))
+        if crs.is_projected:
+            unit_factor = 1.0
+            if crs.axis_info and crs.axis_info[0].unit_conversion_factor:
+                unit_factor = float(crs.axis_info[0].unit_conversion_factor)
+            return rx * unit_factor, ry * unit_factor
+
+        cx = (src.bounds.left + src.bounds.right) / 2
+        cy = (src.bounds.bottom + src.bounds.top) / 2
+        transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
+        lon, lat = transformer.transform(cx, cy)
+        geod = Geod(ellps="WGS84")
+        _, _, width_m = geod.inv(lon - rx / 2, lat, lon + rx / 2, lat)
+        _, _, height_m = geod.inv(lon, lat - ry / 2, lon, lat + ry / 2)
+        return abs(float(width_m)), abs(float(height_m))
+
+
+def umbral_celdas_desde_area(ruta: str | Path, area_km2: float) -> tuple[int, tuple[float, float]]:
+    """Convierte un área mínima de aporte en km² a número de celdas del DEM."""
+    if area_km2 <= 0:
+        raise ValueError("El área mínima de aporte debe ser mayor que cero.")
+    width_m, height_m = resolucion_metrica_aproximada(ruta)
+    cell_area = width_m * height_m
+    if cell_area <= 0:
+        raise ValueError("No fue posible calcular el área de la celda del DEM.")
+    threshold = max(1, round(area_km2 * 1_000_000 / cell_area))
+    return int(threshold), (width_m, height_m)
