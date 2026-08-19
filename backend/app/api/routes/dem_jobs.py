@@ -119,18 +119,21 @@ async def _run_auto_download(job_id: str, source: str, lat: float, lng: float) -
     job_dir = settings.workspace_dir / "dem_downloads" / job_id
     _jobs[job_id].update({
         "status": "processing",
-        "message": "Preparando delimitación automática desde el punto de aforo…",
+        "message": "Preparando búsqueda coarse-to-fine desde el punto de aforo…",
         "mode": "outlet_auto",
     })
 
     def progress(round_index: int, max_rounds: int, bounds: dict, phase: str) -> None:
-        if phase == "downloading":
-            message = f"Iteración {round_index}/{max_rounds}: descargando DEM preliminar alrededor del punto…"
-        else:
-            message = f"Iteración {round_index}/{max_rounds}: comprobando si la divisoria toca los bordes del DEM…"
+        messages = {
+            "coarse_downloading": f"Fase 1 · localización 90 m · iteración {round_index}/{max_rounds}: descargando DEM preliminar…",
+            "coarse_checking": f"Fase 1 · localización 90 m · iteración {round_index}/{max_rounds}: verificando divisoria…",
+            "fine_downloading": f"Fase 2 · resolución final · verificación {round_index}/{max_rounds}: descargando {source}…",
+            "fine_checking": f"Fase 2 · resolución final · verificación {round_index}/{max_rounds}: comprobando que la cuenca quede contenida…",
+        }
         _jobs[job_id].update({
             "status": "processing",
-            "message": message,
+            "message": messages.get(phase, "Procesando delimitación automática…"),
+            "phase": phase,
             "iteration": round_index,
             "max_iterations": max_rounds,
             "current_bounds": bounds,
@@ -144,13 +147,15 @@ async def _run_auto_download(job_id: str, source: str, lat: float, lng: float) -
             destination_dir=job_dir,
             progress=progress,
         )
-        _jobs[job_id].update({"status": "processing", "message": "Extensión final encontrada. Generando vista previa…"})
+        _jobs[job_id].update({"status": "processing", "message": "DEM definitivo encontrado. Generando vista previa…"})
         preview = await asyncio.to_thread(_preview_from_path, path)
         contained = bool(adaptive.get("contained"))
+        coarse_rounds = adaptive.get("rounds", 1)
+        fine_rounds = adaptive.get("fine_rounds", 1)
         message = (
-            f"DEM automático listo en {adaptive.get('rounds', 1)} iteración(es). La cuenca preliminar quedó contenida."
+            f"DEM automático listo · localización COP90 en {coarse_rounds} iteración(es) + {source} final en {fine_rounds} verificación(es)."
             if contained
-            else "DEM automático listo, pero la cuenca siguió tocando un borde tras el máximo de iteraciones; revisa la extensión antes de analizar."
+            else f"DEM final generado con {source}, pero la divisoria todavía toca un borde; revisa la extensión antes del análisis definitivo."
         )
         _jobs[job_id].update({
             "status": "ready",
@@ -234,6 +239,5 @@ def resolve_server_dem(dem_id: str) -> Path:
     candidates = list(job_dir.glob("*.tif")) if job_dir.exists() else []
     if not candidates:
         raise FileNotFoundError("El DEM descargado ya no está disponible en el servidor.")
-    # Priorizamos el DEM adaptativo final si existe.
     adaptive = [path for path in candidates if "adaptive" in path.name]
     return adaptive[0] if adaptive else candidates[0]
