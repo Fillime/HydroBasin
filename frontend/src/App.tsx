@@ -44,6 +44,7 @@ type Summary = {
   drainage_threshold?: number
   minimum_area_km2?: number
   strahler_max?: number
+  subbasin_count?: number
   metric_resolution_m?: [number, number] | null
   crs_dem?: string
   crs_calculo?: string
@@ -85,6 +86,7 @@ type StreamEvent = {
   summary?: Summary
   watershed_geojson?: GeoJsonData
   drainage_geojson?: GeoJsonData
+  subbasins_geojson?: GeoJsonData
   report?: ReportInfo
 }
 
@@ -120,7 +122,7 @@ const workflow = [
   { label: 'Dirección de flujo', icon: Waves },
   { label: 'Acumulación', icon: Activity },
   { label: 'Exutorio', icon: CircleDot },
-  { label: 'Delimitación', icon: Droplets },
+  { label: 'Cuenca y subcuencas', icon: Droplets },
   { label: 'Red de drenaje', icon: Waves },
   { label: 'Morfometría / Strahler', icon: BarChart3 },
 ]
@@ -140,6 +142,7 @@ export default function App() {
   const [reportInfo, setReportInfo] = useState<ReportInfo | null>(null)
   const [watershedGeoJson, setWatershedGeoJson] = useState<GeoJsonData>(null)
   const [drainageGeoJson, setDrainageGeoJson] = useState<GeoJsonData>(null)
+  const [subbasinsGeoJson, setSubbasinsGeoJson] = useState<GeoJsonData>(null)
   const [jobId, setJobId] = useState('')
   const [error, setError] = useState('')
   const [activeStep, setActiveStep] = useState(0)
@@ -150,14 +153,14 @@ export default function App() {
   const [processLogs, setProcessLogs] = useState<ProcessLogEntry[]>([])
   const [layers, setLayers] = useState<Record<string, boolean>>({
     'Mapa base': true, DEM: true, Hillshade: false, 'DEM corregido': false,
-    'Dirección de flujo': false, Acumulación: false, Cuenca: true,
+    'Dirección de flujo': false, Acumulación: false, Cuenca: true, Subcuencas: true,
     'Red de drenaje': true, Exutorio: true,
   })
 
   const fileSize = useMemo(() => file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : '', [file])
 
   const clearResults = () => {
-    setSummary(null); setReportInfo(null); setWatershedGeoJson(null); setDrainageGeoJson(null); setJobId('')
+    setSummary(null); setReportInfo(null); setWatershedGeoJson(null); setDrainageGeoJson(null); setSubbasinsGeoJson(null); setJobId('')
   }
 
   const newProject = () => {
@@ -266,8 +269,9 @@ export default function App() {
             setReportInfo(item.report ?? null)
             setWatershedGeoJson(item.watershed_geojson ?? null)
             setDrainageGeoJson(item.drainage_geojson ?? null)
+            setSubbasinsGeoJson(item.subbasins_geojson ?? null)
             setJobId(item.job_id ?? '')
-            setLayers((current) => ({ ...current, Cuenca: true, 'Red de drenaje': true }))
+            setLayers((current) => ({ ...current, Cuenca: true, Subcuencas: true, 'Red de drenaje': true }))
           }
         }
         if (done) break
@@ -304,6 +308,7 @@ export default function App() {
       <div><span>Área mínima de aporte</span><strong>{summary.minimum_area_km2?.toFixed(2)} km²</strong></div>
       <div><span>Umbral calculado</span><strong>{summary.drainage_threshold?.toLocaleString()} celdas</strong></div>
       <div><span>Orden Strahler máximo</span><strong>{summary.strahler_max ?? '—'}</strong></div>
+      <div><span>Subcuencas</span><strong>{summary.subbasin_count ?? '—'}</strong></div>
       <div><span>Resolución métrica aprox.</span><strong>{summary.metric_resolution_m ? `${summary.metric_resolution_m[0].toFixed(1)} × ${summary.metric_resolution_m[1].toFixed(1)} m` : '—'}</strong></div>
       <div><span>CRS de cálculo</span><strong>{summary.crs_calculo || '—'}</strong></div>
     </div>
@@ -326,21 +331,22 @@ export default function App() {
       <div className="preset-row">
         {[1, 5, 10, 25].map((value) => <button type="button" key={value} className={Number(minimumAreaKm2) === value ? 'active' : ''} onClick={() => setMinimumAreaKm2(String(value))}>{value} km²</button>)}
       </div>
-      <p className="helper">Puedes usar valores enteros o decimales, por ejemplo 1, 2.5, 5 o 10 km². HydroBasin calcula automáticamente cuántas celdas corresponden a esta área usando el CRS y la resolución real del DEM. Si la red sale demasiado densa, aumenta este valor.</p>
+      <p className="helper">Puedes usar valores enteros o decimales. HydroBasin calcula automáticamente el umbral en celdas. El mismo criterio estructura la red y las subcuencas internas; si el resultado sale demasiado detallado, aumenta el área mínima.</p>
     </>
   )
 
   const reportDownloads = jobId && reportInfo ? (
     <section className="form-section">
-      <div className="form-section-heading"><strong>Informe y diagramas</strong><span>LaTeX · 200 DPI</span></div>
+      <div className="form-section-heading"><strong>Informe y cartografía</strong><span>PDF · LaTeX opcional · 220 DPI</span></div>
       <div className="download-list">
-        {reportInfo.tex && <button type="button" className="secondary-button wide" onClick={() => downloadArtifact(reportInfo.tex!)}><FileText size={14} /> Descargar informe .tex</button>}
         {reportInfo.pdf && <button type="button" className="secondary-button wide" onClick={() => downloadArtifact(reportInfo.pdf!)}><Download size={14} /> Descargar informe PDF</button>}
+        {reportInfo.tex && <button type="button" className="secondary-button wide" onClick={() => downloadArtifact(reportInfo.tex!)}><FileText size={14} /> Descargar fuente LaTeX</button>}
         <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/04_cuenca_drenaje.png')}><Download size={14} /> Cuenca + drenajes</button>
-        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/03_acumulacion.png')}><Download size={14} /> Acumulación de flujo</button>
-        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/05_strahler.png')}><Download size={14} /> Orden Strahler</button>
+        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/03_acumulacion_cuenca.png')}><Download size={14} /> Acumulación de flujo</button>
+        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/05_strahler_cuenca.png')}><Download size={14} /> Orden Strahler</button>
+        {summary?.subbasin_count ? <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/06_subcuencas.png')}><Download size={14} /> Mapa de subcuencas</button> : null}
+        {summary?.subbasin_count ? <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('subcuencas.gpkg')}><Download size={14} /> Subcuencas GeoPackage</button> : null}
       </div>
-      {!reportInfo.compiled && <p className="helper">El archivo .tex siempre se genera. Para obtener el PDF automáticamente, el servidor necesita una distribución LaTeX con pdflatex.</p>}
     </section>
   ) : null
 
@@ -379,7 +385,7 @@ export default function App() {
 
     if (activeView === 'settings') return (
       <div className="inspector-content">
-        <div className="inspector-header"><span className="section-label">CONFIGURACIÓN</span><h1>Parámetros</h1><p>Controla la densidad de la red. La resolución se detecta automáticamente.</p></div>
+        <div className="inspector-header"><span className="section-label">CONFIGURACIÓN</span><h1>Parámetros</h1><p>Controla la densidad de la red y la subdivisión hidrológica.</p></div>
         <section className="form-section">{drainageControl}</section>
         <div className="run-area"><button className="secondary-button wide" onClick={newProject}><RotateCcw size={14} /> Restablecer proyecto</button></div>
       </div>
@@ -406,7 +412,7 @@ export default function App() {
             <p className="helper">Haz clic dentro del DEM, idealmente sobre el cauce en el punto hasta donde quieres delimitar la cuenca.</p>
           </section>
           <section className="form-section">
-            <div className="form-section-heading"><strong>Red de drenaje</strong><span>D8 · automático</span></div>
+            <div className="form-section-heading"><strong>Red y subcuencas</strong><span>D8 · automático</span></div>
             {drainageControl}
           </section>
           {error && <div className="error-box">{error}</div>}
@@ -426,6 +432,7 @@ export default function App() {
     { name: 'Dirección de flujo', available: false },
     { name: 'Acumulación', available: false },
     { name: 'Cuenca', available: Boolean(watershedGeoJson) },
+    { name: 'Subcuencas', available: Boolean(subbasinsGeoJson) },
     { name: 'Red de drenaje', available: Boolean(drainageGeoJson) },
     { name: 'Exutorio', available: true },
   ]
@@ -479,9 +486,10 @@ export default function App() {
               <MapClickHandler onPick={pickOutlet} />
               {demPreview && layers.DEM && demBounds && <ImageOverlay url={demPreview.preview_data_url} bounds={demBounds} opacity={0.62} />}
               {demPreview && <FitToDem preview={demPreview} />}
+              {layers.Subcuencas && subbasinsGeoJson && <GeoJSON key={`subbasins-${jobId}`} data={subbasinsGeoJson as any} style={{ color: '#d8e4e4', weight: 1, fillColor: '#1f9d8f', fillOpacity: 0.13 }} />}
+              {layers.Cuenca && watershedGeoJson && <GeoJSON key={`watershed-${jobId}`} data={watershedGeoJson as any} style={{ color: '#f59e0b', weight: 2.4, fillColor: '#f59e0b', fillOpacity: 0.05 }} />}
+              {layers['Red de drenaje'] && drainageGeoJson && <GeoJSON key={`drainage-${jobId}`} data={drainageGeoJson as any} style={{ color: '#3b82f6', weight: 1.6, opacity: 0.9 }} />}
               {layers.Exutorio && <CircleMarker center={[outlet.lat, outlet.lng]} radius={7} pathOptions={{ color: '#1f9d8f', weight: 2, fillColor: '#1f9d8f', fillOpacity: 0.35 }}><Popup><strong>Exutorio seleccionado</strong><br />{outlet.lat.toFixed(6)}, {outlet.lng.toFixed(6)}</Popup></CircleMarker>}
-              {layers.Cuenca && watershedGeoJson && <GeoJSON key={`watershed-${jobId}`} data={watershedGeoJson as any} style={{ color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.12 }} />}
-              {layers['Red de drenaje'] && drainageGeoJson && <GeoJSON key={`drainage-${jobId}`} data={drainageGeoJson as any} style={{ color: '#3b82f6', weight: 2, opacity: 0.9 }} />}
               {watershedGeoJson && <FitToGeoJson data={watershedGeoJson} />}
               <ScaleControl position="bottomleft" imperial={false} />
             </MapContainer>
