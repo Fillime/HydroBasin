@@ -1,4 +1,5 @@
-import { CheckCircle2, ChevronDown, CircleAlert, Info, LoaderCircle, Trash2, X } from 'lucide-react'
+import { CheckCircle2, ChevronDown, CircleAlert, Info, LoaderCircle, Trash2 } from 'lucide-react'
+import './ProcessLog.css'
 
 export type ProcessLogEntry = {
   id: number
