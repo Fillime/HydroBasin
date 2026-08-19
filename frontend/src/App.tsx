@@ -6,7 +6,9 @@ import {
   ChevronRight,
   CircleDot,
   Database,
+  Download,
   Droplets,
+  FileText,
   FileUp,
   FolderOpen,
   Home,
@@ -40,12 +42,21 @@ type Summary = {
   coeficiente_compacidad?: number
   relacion_circularidad?: number
   drainage_threshold?: number
+  minimum_area_km2?: number
+  strahler_max?: number
+  metric_resolution_m?: [number, number] | null
   crs_dem?: string
   crs_calculo?: string
   dem_width?: number
   dem_height?: number
   dem_resolution?: [number, number]
   outlet_snapped?: { x: number; y: number; crs: string }
+}
+
+type ReportInfo = {
+  tex?: string | null
+  pdf?: string | null
+  compiled?: boolean
 }
 
 type Bounds = { west: number; south: number; east: number; north: number }
@@ -74,6 +85,7 @@ type StreamEvent = {
   summary?: Summary
   watershed_geojson?: GeoJsonData
   drainage_geojson?: GeoJsonData
+  report?: ReportInfo
 }
 
 function MapClickHandler({ onPick }: { onPick: (outlet: Outlet) => void }) {
@@ -110,7 +122,7 @@ const workflow = [
   { label: 'Exutorio', icon: CircleDot },
   { label: 'Delimitación', icon: Droplets },
   { label: 'Red de drenaje', icon: Waves },
-  { label: 'Morfometría', icon: BarChart3 },
+  { label: 'Morfometría / Strahler', icon: BarChart3 },
 ]
 
 const viewLabels: Record<ViewId, string> = {
@@ -122,10 +134,10 @@ export default function App() {
   const [demPreview, setDemPreview] = useState<DemPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [outlet, setOutlet] = useState<Outlet>({ lat: 7.06, lng: -73.85 })
-  const [minimumAreaKm2, setMinimumAreaKm2] = useState('1')
-  const [resolutionM, setResolutionM] = useState('30')
+  const [minimumAreaKm2, setMinimumAreaKm2] = useState('5')
   const [loading, setLoading] = useState(false)
   const [summary, setSummary] = useState<Summary | null>(null)
+  const [reportInfo, setReportInfo] = useState<ReportInfo | null>(null)
   const [watershedGeoJson, setWatershedGeoJson] = useState<GeoJsonData>(null)
   const [drainageGeoJson, setDrainageGeoJson] = useState<GeoJsonData>(null)
   const [jobId, setJobId] = useState('')
@@ -143,20 +155,14 @@ export default function App() {
   })
 
   const fileSize = useMemo(() => file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : '', [file])
-  const thresholdCells = useMemo(() => {
-    const area = Number(minimumAreaKm2)
-    const resolution = Number(resolutionM)
-    if (!Number.isFinite(area) || !Number.isFinite(resolution) || area <= 0 || resolution <= 0) return 1000
-    return Math.max(1, Math.round((area * 1_000_000) / (resolution * resolution)))
-  }, [minimumAreaKm2, resolutionM])
 
   const clearResults = () => {
-    setSummary(null); setWatershedGeoJson(null); setDrainageGeoJson(null); setJobId('')
+    setSummary(null); setReportInfo(null); setWatershedGeoJson(null); setDrainageGeoJson(null); setJobId('')
   }
 
   const newProject = () => {
     setFile(null); setDemPreview(null); setOutlet({ lat: 7.06, lng: -73.85 })
-    setMinimumAreaKm2('1'); setResolutionM('30'); setError(''); setActiveStep(0)
+    setMinimumAreaKm2('5'); setError(''); setActiveStep(0)
     setActiveView('analysis'); setProcessLogs([]); setProcessProgress(0); setLogOpen(false)
     clearResults()
   }
@@ -191,13 +197,15 @@ export default function App() {
   const runAnalysis = async (event: FormEvent) => {
     event.preventDefault()
     if (!file) { setError('Carga primero un DEM GeoTIFF.'); return }
+    const area = Number(minimumAreaKm2)
+    if (!Number.isFinite(area) || area <= 0) { setError('El área mínima de aporte debe ser mayor que cero.'); return }
 
     const body = new FormData()
     body.append('dem', file)
     body.append('x', outlet.lng.toString())
     body.append('y', outlet.lat.toString())
     body.append('point_crs', 'EPSG:4326')
-    body.append('threshold', thresholdCells.toString())
+    body.append('minimum_area_km2', area.toString())
 
     const startedAt = performance.now()
     const addLog = (level: ProcessLogEntry['level'], message: string) => {
@@ -255,6 +263,7 @@ export default function App() {
           if (item.type === 'result') {
             resultReceived = true
             setSummary(item.summary ?? null)
+            setReportInfo(item.report ?? null)
             setWatershedGeoJson(item.watershed_geojson ?? null)
             setDrainageGeoJson(item.drainage_geojson ?? null)
             setJobId(item.job_id ?? '')
@@ -281,15 +290,22 @@ export default function App() {
     }
   }
 
+  const downloadArtifact = (path: string) => {
+    if (!jobId) return
+    window.open(`/api/analysis/jobs/${jobId}/artifact/${path}`, '_blank')
+  }
+
   const resultMetrics = summary ? (
     <div className="metrics-list">
       <div><span>Área</span><strong>{summary.area_km2?.toFixed(2)} km²</strong></div>
       <div><span>Perímetro</span><strong>{summary.perimetro_km?.toFixed(2)} km</strong></div>
       <div><span>Compacidad</span><strong>{summary.coeficiente_compacidad?.toFixed(3)}</strong></div>
       <div><span>Circularidad</span><strong>{summary.relacion_circularidad?.toFixed(3)}</strong></div>
-      <div><span>CRS del DEM</span><strong>{summary.crs_dem || '—'}</strong></div>
+      <div><span>Área mínima de aporte</span><strong>{summary.minimum_area_km2?.toFixed(2)} km²</strong></div>
+      <div><span>Umbral calculado</span><strong>{summary.drainage_threshold?.toLocaleString()} celdas</strong></div>
+      <div><span>Orden Strahler máximo</span><strong>{summary.strahler_max ?? '—'}</strong></div>
+      <div><span>Resolución métrica aprox.</span><strong>{summary.metric_resolution_m ? `${summary.metric_resolution_m[0].toFixed(1)} × ${summary.metric_resolution_m[1].toFixed(1)} m` : '—'}</strong></div>
       <div><span>CRS de cálculo</span><strong>{summary.crs_calculo || '—'}</strong></div>
-      <div><span>Umbral D8</span><strong>{summary.drainage_threshold?.toLocaleString()} celdas</strong></div>
     </div>
   ) : <div className="empty-state"><Droplets size={18} /><span>Ejecuta un análisis para generar resultados.</span></div>
 
@@ -297,11 +313,35 @@ export default function App() {
     <div className="metrics-list">
       <div><span>CRS</span><strong>{demPreview.crs}</strong></div>
       <div><span>Dimensiones</span><strong>{demPreview.width} × {demPreview.height}</strong></div>
-      <div><span>Resolución</span><strong>{demPreview.resolution[0].toFixed(5)} × {demPreview.resolution[1].toFixed(5)}</strong></div>
+      <div><span>Resolución nativa</span><strong>{demPreview.resolution[0].toFixed(5)} × {demPreview.resolution[1].toFixed(5)}</strong></div>
       <div><span>Elevación</span><strong>{demPreview.elevation_min.toFixed(1)} – {demPreview.elevation_max.toFixed(1)} m</strong></div>
       <div><span>Oeste / Este</span><strong>{demPreview.bounds_wgs84.west.toFixed(5)} / {demPreview.bounds_wgs84.east.toFixed(5)}</strong></div>
       <div><span>Sur / Norte</span><strong>{demPreview.bounds_wgs84.south.toFixed(5)} / {demPreview.bounds_wgs84.north.toFixed(5)}</strong></div>
     </div>
+  ) : null
+
+  const drainageControl = (
+    <>
+      <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="0.1" /></label>
+      <div className="preset-row">
+        {[1, 5, 10, 25].map((value) => <button type="button" key={value} className={Number(minimumAreaKm2) === value ? 'active' : ''} onClick={() => setMinimumAreaKm2(String(value))}>{value} km²</button>)}
+      </div>
+      <p className="helper">HydroBasin calcula automáticamente cuántas celdas corresponden a esta área usando el CRS y la resolución real del DEM. Si la red sale demasiado densa, aumenta este valor.</p>
+    </>
+  )
+
+  const reportDownloads = jobId && reportInfo ? (
+    <section className="form-section">
+      <div className="form-section-heading"><strong>Informe y diagramas</strong><span>LaTeX · 200 DPI</span></div>
+      <div className="download-list">
+        {reportInfo.tex && <button type="button" className="secondary-button wide" onClick={() => downloadArtifact(reportInfo.tex!)}><FileText size={14} /> Descargar informe .tex</button>}
+        {reportInfo.pdf && <button type="button" className="secondary-button wide" onClick={() => downloadArtifact(reportInfo.pdf!)}><Download size={14} /> Descargar informe PDF</button>}
+        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/04_cuenca_drenaje.png')}><Download size={14} /> Cuenca + drenajes</button>
+        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/03_acumulacion.png')}><Download size={14} /> Acumulación de flujo</button>
+        <button type="button" className="secondary-button wide" onClick={() => downloadArtifact('figuras/05_strahler.png')}><Download size={14} /> Orden Strahler</button>
+      </div>
+      {!reportInfo.compiled && <p className="helper">El archivo .tex siempre se genera. Para obtener el PDF automáticamente, el servidor necesita una distribución LaTeX con pdflatex.</p>}
+    </section>
   ) : null
 
   const renderInspector = () => {
@@ -325,6 +365,7 @@ export default function App() {
       <div className="inspector-content">
         <div className="inspector-header"><span className="section-label">RESULTADOS</span><h1>Cuenca delimitada</h1><p>{jobId ? `Proceso ${jobId.slice(0, 8)}` : 'Todavía no hay un proceso calculado.'}</p></div>
         <section className="results-section">{resultMetrics}</section>
+        {reportDownloads}
         <div className="run-area"><button className="secondary-button wide" onClick={() => setActiveView('analysis')}><SlidersHorizontal size={14} /> Ajustar análisis</button></div>
       </div>
     )
@@ -338,12 +379,8 @@ export default function App() {
 
     if (activeView === 'settings') return (
       <div className="inspector-content">
-        <div className="inspector-header"><span className="section-label">CONFIGURACIÓN</span><h1>Parámetros</h1><p>Valores por defecto del análisis hidrológico.</p></div>
-        <section className="form-section">
-          <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="0.1" /></label>
-          <label className="field">Resolución del DEM (m)<input value={resolutionM} onChange={(e) => setResolutionM(e.target.value)} type="number" min="0.1" step="0.1" /></label>
-          <div className="calculation-row"><span>Umbral equivalente</span><strong>{thresholdCells.toLocaleString()} celdas</strong></div>
-        </section>
+        <div className="inspector-header"><span className="section-label">CONFIGURACIÓN</span><h1>Parámetros</h1><p>Controla la densidad de la red. La resolución se detecta automáticamente.</p></div>
+        <section className="form-section">{drainageControl}</section>
         <div className="run-area"><button className="secondary-button wide" onClick={newProject}><RotateCcw size={14} /> Restablecer proyecto</button></div>
       </div>
     )
@@ -369,15 +406,14 @@ export default function App() {
             <p className="helper">Haz clic dentro del DEM, idealmente sobre el cauce en el punto hasta donde quieres delimitar la cuenca.</p>
           </section>
           <section className="form-section">
-            <div className="form-section-heading"><strong>Red de drenaje</strong><span>D8</span></div>
-            <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="0.1" /></label>
-            <label className="field">Resolución para umbral (m)<input value={resolutionM} onChange={(e) => setResolutionM(e.target.value)} type="number" min="0.1" step="0.1" /></label>
-            <div className="calculation-row"><span>Umbral equivalente</span><strong>{thresholdCells.toLocaleString()} celdas</strong></div>
+            <div className="form-section-heading"><strong>Red de drenaje</strong><span>D8 · automático</span></div>
+            {drainageControl}
           </section>
           {error && <div className="error-box">{error}</div>}
           <div className="run-area"><button className="primary-button" disabled={loading || previewLoading}><Play size={14} fill="currentColor" /> {loading ? 'Procesando…' : 'Ejecutar análisis'}</button></div>
         </form>
         <section className="results-section"><div className="form-section-heading"><strong>Resultados</strong><span>{summary ? 'Calculados' : 'Pendientes'}</span></div>{resultMetrics}</section>
+        {reportDownloads}
       </>
     )
   }
