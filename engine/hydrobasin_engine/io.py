@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+
 import geopandas as gpd
+import numpy as np
 import rasterio
 from rasterio.features import shapes
 from shapely.geometry import shape
-import numpy as np
 
 
 def guardar_raster(ruta: str | Path, array, referencia: str | Path, nodata=None):
@@ -35,3 +37,26 @@ def guardar_vector(gdf: gpd.GeoDataFrame, ruta: str | Path):
     ruta = Path(ruta)
     ruta.parent.mkdir(parents=True, exist_ok=True)
     gdf.to_file(ruta)
+
+
+def guardar_shapefile_zip(gdf: gpd.GeoDataFrame, ruta_zip: str | Path, nombre: str) -> Path:
+    """Exporta un GeoDataFrame como ESRI Shapefile y empaqueta todos sus archivos en ZIP."""
+    ruta_zip = Path(ruta_zip)
+    ruta_zip.parent.mkdir(parents=True, exist_ok=True)
+    temp_dir = ruta_zip.parent / f".{nombre}_shp"
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        shp_path = temp_dir / f"{nombre}.shp"
+        gdf.to_file(shp_path, driver="ESRI Shapefile", encoding="UTF-8")
+        archive_base = ruta_zip.with_suffix("")
+        created = Path(shutil.make_archive(str(archive_base), "zip", root_dir=temp_dir))
+        if created != ruta_zip:
+            if ruta_zip.exists():
+                ruta_zip.unlink()
+            created.replace(ruta_zip)
+        return ruta_zip
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
