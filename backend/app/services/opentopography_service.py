@@ -33,7 +33,6 @@ GLOBAL_SOURCES: tuple[DemSource, ...] = (
 
 
 def _bbox_area_km2(south: float, north: float, west: float, east: float) -> float:
-    # Aproximación suficiente para advertencias/estimaciones de descarga.
     mean_lat = (south + north) / 2.0
     km_lat = 111.32
     import math
@@ -93,17 +92,38 @@ async def download_dem(
     }
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=30.0), follow_redirects=True) as client:
-        response = await client.get(OPENTOPO_GLOBALDEM_URL, params=params)
-        if response.status_code >= 400:
-            detail = response.text.strip()[:1200]
-            raise RuntimeError(f"OpenTopography respondió {response.status_code}: {detail or 'error sin detalle'}")
-        content_type = response.headers.get("content-type", "").lower()
-        if "text" in content_type or "json" in content_type:
-            detail = response.text.strip()[:1200]
-            raise RuntimeError(f"OpenTopography no devolvió un GeoTIFF: {detail or content_type}")
-        destination.write_bytes(response.content)
+    timeout = httpx.Timeout(connect=30.0, read=600.0, write=60.0, pool=30.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with client.stream("GET", OPENTOPO_GLOBALDEM_URL, params=params) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    detail = body.decode("utf-8", errors="replace").strip()[:1600]
+                    raise RuntimeError(f"OpenTopography respondió {response.status_code}: {detail or 'error sin detalle'}")
 
-    if destination.stat().st_size < 1024:
+                content_type = response.headers.get("content-type", "").lower()
+                if "text" in content_type or "json" in content_type:
+                    body = await response.aread()
+                    detail = body.decode("utf-8", errors="replace").strip()[:1600]
+                    raise RuntimeError(f"OpenTopography no devolvió un GeoTIFF: {detail or content_type}")
+
+                with destination.open("wb") as output:
+                    async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                        if chunk:
+                            output.write(chunk)
+    except httpx.TimeoutException as exc:
+        destination.unlink(missing_ok=True)
+        raise RuntimeError(
+            "OpenTopography tardó demasiado en preparar o transferir el DEM. Reduce el área seleccionada o usa una fuente de 90 m."
+        ) from exc
+    except httpx.RequestError as exc:
+        destination.unlink(missing_ok=True)
+        raise RuntimeError(f"No fue posible conectar con OpenTopography: {exc}") from exc
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+
+    if not destination.exists() or destination.stat().st_size < 1024:
+        destination.unlink(missing_ok=True)
         raise RuntimeError("El archivo DEM descargado es demasiado pequeño y parece inválido.")
     return destination
