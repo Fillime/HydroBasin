@@ -5,6 +5,8 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm
@@ -91,11 +93,9 @@ def _plot_plan(figures_dir: Path, watershed, drainage, subbasins, main_channel, 
     ax.set_ylabel("Coordenada Norte")
     ax.set_title("Plano hidrográfico - cuenca, subcuencas y red de drenaje", fontsize=14, fontweight="bold")
 
-    # North arrow.
     ax.annotate("N", xy=(0.075, 0.92), xycoords="axes fraction", ha="center", va="center", fontsize=15, fontweight="bold")
     ax.annotate("", xy=(0.075, 0.89), xytext=(0.075, 0.78), xycoords="axes fraction", arrowprops=dict(arrowstyle="-|>", lw=2.0, color="#111111"))
 
-    # Approximate graphic scale in projected metric coordinates.
     if dx > 0:
         raw_km = max(0.1, dx / 1000.0 * 0.20)
         exponent = 10 ** np.floor(np.log10(raw_km))
@@ -271,211 +271,191 @@ def _interpretation(summary: dict) -> str:
         parts.append(f"La densidad de drenaje es {_n(dd, 3)} km/km$^2$ y se clasifica como {_latex_escape(summary.get('clasificacion_densidad_drenaje') or 'sin clasificación')}. Este parámetro expresa la longitud de cauces por unidad de superficie y depende del umbral usado para extraer la red.")
     slope = summary.get("main_channel_slope_percent")
     if slope is not None:
-        parts.append(f"La pendiente media global del cauce principal es {_n(slope, 2)}\%, calculada entre la cabecera trazada automáticamente y el exutorio. Debe interpretarse junto con el perfil longitudinal, pues no reemplaza un análisis por tramos.")
-    return "\n\n".join(parts)
+        parts.append(f"La pendiente media del cauce principal es {_n(slope, 2)}\%, parámetro empleado junto con su longitud para estimar tiempos de concentración por métodos empíricos.")
+    return "\n\n".join(parts) or "Los indicadores deben interpretarse junto con la resolución y calidad del DEM, el umbral de drenaje y la ubicación del exutorio."
 
 
-def _generar_fuente_latex(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None) -> str:
-    tex_path = output_dir / "informe_hydrobasin.tex"
-    resolution = summary.get("metric_resolution_m")
-    resolution_text = "N/D" if not resolution else f"{resolution[0]:.1f} × {resolution[1]:.1f} m"
-    outlet = summary.get("outlet_original", {})
-    outlet_text = f"{outlet.get('y', 'N/D')}, {outlet.get('x', 'N/D')}"
-    generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
-    sub_rows = _subbasin_table_rows(subbasins)
-    sub_table = rf"""\subsection{{Subcuencas de mayor extensión}}
-\begin{{table}}[H]\centering\begin{{tabular}}{{rr}}\toprule\textbf{{ID}} & \textbf{{Área (km$^2$)}} \\\midrule
-{sub_rows}
-\bottomrule\end{{tabular}}\caption{{Subcuencas de mayor extensión derivadas del DEM.}}\end{{table}}""" if sub_rows else ""
-    profile_figure = rf"""\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['profile']}}}\caption{{Perfil longitudinal automático del cauce principal, medido desde el exutorio hacia la cabecera.}}\end{{figure}}""" if figures.get("profile") else ""
-    sub_figure = rf"""\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['subbasins']}}}\caption{{Subcuencas hidrológicas derivadas de la red D8.}}\end{{figure}}""" if figures.get("subbasins") else ""
-
-    tex = rf"""\documentclass[11pt,a4paper]{{article}}
+def _report_tex(summary: dict, figures: dict[str, str], subbasins) -> str:
+    title = _latex_escape(summary.get("dem_source") or "HydroBasin")
+    rows = _subbasin_table_rows(subbasins)
+    sub_section = ""
+    if rows:
+        sub_section = rf"""
+\subsection{{Subcuencas}}
+Se identificaron {summary.get('subbasin_count', 0)} subcuencas hidrológicas mediante puntos de control derivados de la estructura de flujo D8. La tabla resume las unidades de mayor área.
+\begin{{center}}
+\begin{{tabular}}{{rr}}
+\toprule
+ID & Área (km$^2$) \\
+\midrule
+{rows}
+\bottomrule
+\end{{tabular}}
+\end{{center}}
+"""
+    profile_figure = ""
+    if figures.get("profile"):
+        profile_figure = rf"""
+\begin{{figure}}[H]
+\centering\includegraphics[width=0.95\textwidth]{{{figures['profile']}}}
+\caption{{Perfil longitudinal del cauce principal.}}
+\end{{figure}}
+"""
+    return rf"""\documentclass[11pt,a4paper]{{article}}
 \usepackage[utf8]{{inputenc}}
 \usepackage[T1]{{fontenc}}
-\usepackage[spanish,es-nodecimaldot]{{babel}}
-\usepackage{{graphicx,booktabs,array,geometry,float,microtype,fancyhdr,xcolor,caption,hyperref,lastpage}}
-\geometry{{top=2.0cm,bottom=2.0cm,left=2.2cm,right=2.2cm}}
-\definecolor{{hydro}}{{HTML}}{{1F5F66}}
-\definecolor{{hydrolight}}{{HTML}}{{EAF3F2}}
-\hypersetup{{colorlinks=true,linkcolor=hydro,urlcolor=hydro}}
-\captionsetup{{font=small,labelfont=bf,labelsep=period}}
-\setlength{{\parindent}}{{0pt}}\setlength{{\parskip}}{{0.45em}}
-\pagestyle{{fancy}}\fancyhf{{}}\lhead{{\small\textsc{{HydroBasin}}}}\rhead{{\small Informe de caracterización hidrográfica}}\cfoot{{\small Página \thepage\ de \pageref{{LastPage}}}}
+\usepackage[spanish]{{babel}}
+\usepackage{{geometry}}
+\usepackage{{graphicx}}
+\usepackage{{booktabs}}
+\usepackage{{float}}
+\usepackage{{xcolor}}
+\geometry{{margin=2.2cm}}
+\title{{Informe técnico de delimitación y análisis de cuenca}}
+\author{{HydroBasin}}
+\date{{{datetime.now().strftime('%Y-%m-%d %H:%M')}}}
 \begin{{document}}
-\begin{{titlepage}}\thispagestyle{{empty}}\vspace*{{1.2cm}}
-{{\color{{hydro}}\Large\textbf{{HYDROBASIN}}}}\\[0.3cm]{{\large Watershed Studio}}\\[1.7cm]
-{{\Huge\bfseries Informe de caracterización hidrográfica y morfométrica}}\\[0.55cm]
-{{\large Cuenca principal, subcuencas, red de drenaje y cauce principal}}\\[1.1cm]\rule{{\textwidth}}{{0.8pt}}\\[0.7cm]
-\begin{{tabular}}{{@{{}}p{{5.2cm}}p{{9.3cm}}@{{}}}}
-\textbf{{Área delimitada}} & {_n(summary.get('area_km2'))} km$^2$ \\[0.22cm]
-\textbf{{Fuente del DEM}} & {_latex_escape(summary.get('dem_source') or 'N/D')} \\[0.22cm]
-\textbf{{Exutorio}} & {_latex_escape(outlet_text)} \\[0.22cm]
-\textbf{{CRS de cálculo}} & {_latex_escape(summary.get('crs_calculo') or summary.get('crs_dem') or 'N/D')} \\[0.22cm]
-\textbf{{Resolución aproximada}} & {_latex_escape(resolution_text)} \\[0.22cm]
-\textbf{{Fecha de procesamiento}} & {generated_at} \\
-\end{{tabular}}\vfill
-{{\small Resultados derivados automáticamente del DEM y de los parámetros definidos en HydroBasin.}}
-\end{{titlepage}}
-\tableofcontents\listoffigures\newpage
-
-\section{{Información básica y alcance}}
-El análisis delimita la cuenca aportante al exutorio seleccionado y caracteriza su geometría, relieve y red de drenaje. Los límites, cauces y subcuencas son resultados derivados del DEM; no sustituyen cartografía hidrográfica oficial ni observaciones de campo.
-
-\begin{{table}}[H]\centering\begin{{tabular}}{{p{{7.2cm}}p{{7.2cm}}}}\toprule
-\textbf{{Dato}} & \textbf{{Valor}} \\\midrule
-Fuente del DEM & {_latex_escape(summary.get('dem_source') or 'N/D')} \\
-CRS del DEM & {_latex_escape(summary.get('crs_dem') or 'N/D')} \\
-CRS métrico de cálculo & {_latex_escape(summary.get('crs_calculo') or 'N/D')} \\
-Resolución métrica aproximada & {_latex_escape(resolution_text)} \\
-Área mínima de aporte & {_n(summary.get('minimum_area_km2'), 3)} km$^2$ \\
-Orden máximo de Strahler & {summary.get('strahler_max', 'N/D')} \\
-Subcuencas derivadas & {summary.get('subbasin_count', 'N/D')} \\
-\bottomrule\end{{tabular}}\caption{{Información básica del procesamiento.}}\end{{table}}
+\maketitle
+\section{{Objeto}}
+Este documento resume el procesamiento automático ejecutado por HydroBasin a partir de un modelo digital de elevación y un exutorio. La fuente reportada para el DEM es \textbf{{{title}}}.
 
 \section{{Metodología}}
-El DEM se acondicionó mediante corrección de depresiones y zonas planas. La dirección y acumulación de flujo se calcularon con el esquema D8. El exutorio fue ajustado a una celda de alta acumulación; desde allí se delimitó la cuenca, se extrajo la red de drenaje, se calculó el orden de Strahler y se subdividió la cuenca en unidades internas. El cauce principal se trazó desde el exutorio hacia la cabecera seleccionando sucesivamente el tributario aguas arriba con mayor acumulación.
+El flujo aplicado comprende corrección hidrológica del DEM, dirección de flujo D8, acumulación, ajuste del exutorio a una celda de acumulación significativa, delimitación de cuenca, extracción de drenajes, orden de Strahler, subcuencas, cauce principal y parámetros morfométricos. El área mínima seleccionada para la red fue de {_n(summary.get('minimum_area_km2'), 3)} km$^2$, equivalente a {_n(summary.get('drainage_threshold'), 0)} celdas.
 
-\section{{Índices morfométricos relacionados con la forma}}
-\begin{{table}}[H]\centering\renewcommand{{\arraystretch}}{{1.22}}\begin{{tabular}}{{p{{6.2cm}}r p{{5.2cm}}}}\toprule
-\textbf{{Parámetro}} & \textbf{{Valor}} & \textbf{{Clasificación / unidad}} \\\midrule
-Área & {_n(summary.get('area_km2'))} & km$^2$ \\
-Perímetro & {_n(summary.get('perimetro_km'))} & km \\
-Longitud axial & {_n(summary.get('longitud_axial_km'))} & km \\
-Ancho máximo aproximado & {_n(summary.get('ancho_maximo_km'))} & km \\
-Factor de forma & {_n(summary.get('factor_forma'), 3)} & {_latex_escape(summary.get('clasificacion_factor_forma') or 'N/D')} \\
-Índice de compacidad / Gravelius & {_n(summary.get('coeficiente_compacidad'), 3)} & {_latex_escape(summary.get('clasificacion_compacidad') or 'N/D')} \\
-Índice de alargamiento & {_n(summary.get('indice_alargamiento'), 3)} & {_latex_escape(summary.get('clasificacion_alargamiento') or 'N/D')} \\
-Relación de circularidad & {_n(summary.get('relacion_circularidad'), 3)} & adimensional \\
-\bottomrule\end{{tabular}}\caption{{Índices asociados a la forma de la cuenca.}}\end{{table}}
+\section{{Resultados principales}}
+\begin{{center}}
+\begin{{tabular}}{{lr}}
+\toprule
+Parámetro & Resultado \\
+\midrule
+Área & {_n(summary.get('area_km2'))} km$^2$ \\
+Perímetro & {_n(summary.get('perimetro_km'))} km \\
+Longitud axial & {_n(summary.get('longitud_axial_km'))} km \\
+Factor de forma & {_n(summary.get('factor_forma'), 3)} \\
+Compacidad de Gravelius & {_n(summary.get('coeficiente_compacidad'), 3)} \\
+Circularidad & {_n(summary.get('relacion_circularidad'), 3)} \\
+Densidad de drenaje & {_n(summary.get('densidad_drenaje_km_km2'), 3)} km/km$^2$ \\
+Orden Strahler máximo & {summary.get('strahler_max', 'N/D')} \\
+Longitud cauce principal & {_n(summary.get('main_channel_length_km'))} km \\
+Pendiente cauce principal & {_n(summary.get('main_channel_slope_percent'))}\% \\
+Kirpich & {_n(summary.get('tc_kirpich_min'))} min \\
+Témez & {_n(summary.get('tc_temez_min'))} min \\
+Elevación mínima & {_n(summary.get('elevacion_min_m'))} m \\
+Elevación máxima & {_n(summary.get('elevacion_max_m'))} m \\
+Relieve & {_n(summary.get('relieve_cuenca_m'))} m \\
+\bottomrule
+\end{{tabular}}
+\end{{center}}
 
-\section{{Red de drenaje}}
-\begin{{table}}[H]\centering\begin{{tabular}}{{p{{7cm}}r p{{4.6cm}}}}\toprule
-\textbf{{Parámetro}} & \textbf{{Valor}} & \textbf{{Unidad / clasificación}} \\\midrule
-Longitud total de drenajes & {_n(summary.get('longitud_total_drenajes_km'))} & km \\
-Densidad de drenaje & {_n(summary.get('densidad_drenaje_km_km2'), 3)} & km/km$^2$ - {_latex_escape(summary.get('clasificacion_densidad_drenaje') or 'N/D')} \\
-Segmentos de drenaje & {summary.get('numero_segmentos_drenaje', 'N/D')} & unidades \\
-Densidad de corrientes & {_n(summary.get('densidad_corrientes_n_km2'), 3)} & segmentos/km$^2$ \\
-Orden máximo de Strahler & {summary.get('strahler_max', 'N/D')} & orden \\
-\bottomrule\end{{tabular}}\caption{{Parámetros de la red de drenaje.}}\end{{table}}
-
-\section{{Relieve, cauce principal y tiempo de concentración}}
-\begin{{table}}[H]\centering\begin{{tabular}}{{p{{7cm}}r p{{4.4cm}}}}\toprule
-\textbf{{Parámetro}} & \textbf{{Valor}} & \textbf{{Unidad}} \\\midrule
-Elevación mínima & {_n(summary.get('elevacion_min_m'), 1)} & m \\
-Elevación media & {_n(summary.get('elevacion_media_m'), 1)} & m \\
-Elevación máxima & {_n(summary.get('elevacion_max_m'), 1)} & m \\
-Relieve total & {_n(summary.get('relieve_cuenca_m'), 1)} & m \\
-Longitud del cauce principal & {_n(summary.get('main_channel_length_km'))} & km \\
-Pendiente global del cauce principal & {_n(summary.get('main_channel_slope_percent'), 2)} & \% \\
-Tiempo de concentración - Kirpich & {_n(summary.get('tc_kirpich_h'), 3)} & h \\
-Tiempo de concentración - Témez & {_n(summary.get('tc_temez_h'), 3)} & h \\
-Tiempo de concentración promedio & {_n(summary.get('tc_promedio_h'), 3)} & h \\
-\bottomrule\end{{tabular}}\caption{{Parámetros asociados al relieve y al cauce principal.}}\end{{table}}
+{sub_section}
+\section{{Cartografía}}
+\begin{{figure}}[H]
+\centering\includegraphics[width=0.95\textwidth]{{{figures['watershed']}}}
+\caption{{Cuenca delimitada, red de drenaje y cauce principal.}}
+\end{{figure}}
+\begin{{figure}}[H]
+\centering\includegraphics[width=0.95\textwidth]{{{figures['strahler']}}}
+\caption{{Orden de corrientes de Strahler dentro de la cuenca.}}
+\end{{figure}}
 {profile_figure}
-
-\section{{Subcuencas}}
-{sub_table}
-{sub_figure}
-
-\section{{Interpretación técnica}}
+\section{{Interpretación}}
 {_interpretation(summary)}
 
-\section{{Cartografía técnica}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['dem']}}}\caption{{Contexto regional del DEM y cuenca delimitada.}}\end{{figure}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['hillshade']}}}\caption{{Relieve sombreado de la cuenca.}}\end{{figure}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['accumulation']}}}\caption{{Acumulación de flujo dentro de la cuenca.}}\end{{figure}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['watershed']}}}\caption{{Cuenca, red de drenaje y cauce principal.}}\end{{figure}}
-\begin{{figure}}[H]\centering\includegraphics[width=0.94\textwidth]{{{figures['strahler']}}}\caption{{Orden de Strahler de la red.}}\end{{figure}}
-
-\section{{Información hidrometeorológica}}
-La precipitación, temperatura, caudal y series de estaciones no se infieren a partir del DEM. HydroBasin reserva esta sección para datos observados o provenientes de servicios hidrometeorológicos que se integren al proyecto, evitando asignar valores sin una fuente verificable.
-
-\section{{Observaciones y limitaciones}}
-La densidad de drenaje, el número de corrientes, las subcuencas y el trazado del cauce principal dependen de la resolución del DEM y del área mínima de aporte seleccionada. Para estudios de diseño o amenaza se recomienda validar la red, el cauce principal, las divisorias y los parámetros con cartografía oficial, imágenes, levantamientos o información de campo.
+\section{{Limitaciones}}
+HydroBasin no infiere precipitación, temperatura, caudal observado ni parámetros climáticos a partir del DEM. Los resultados dependen de la resolución y calidad del raster, del acondicionamiento hidrológico, de la ubicación del exutorio y del umbral de extracción de drenajes. Los tiempos de concentración son estimaciones empíricas y deben contrastarse con información del proyecto cuando se utilicen en diseño.
 \end{{document}}
 """
-    tex_path.write_text(tex, encoding="utf-8")
-    return tex_path.name
 
 
-def _generar_plano_latex(output_dir: Path, summary: dict, figures: dict[str, str]) -> str:
-    tex_path = output_dir / "plano_hidrografico.tex"
-    generated_at = datetime.now().strftime("%d/%m/%Y")
-    profile = figures.get("profile")
-    profile_block = rf"\includegraphics[width=\linewidth]{{{profile}}}" if profile else r"\fbox{\parbox[c][4cm][c]{\linewidth}{\centering Perfil longitudinal no disponible}}"
-    tex = rf"""\documentclass[10pt,a3paper,landscape]{{article}}
-\usepackage[utf8]{{inputenc}}\usepackage[T1]{{fontenc}}\usepackage[spanish]{{babel}}
-\usepackage{{graphicx,geometry,array,xcolor}}\geometry{{margin=8mm}}\pagestyle{{empty}}
-\definecolor{{hydro}}{{HTML}}{{1F5F66}}
-\begin{{document}}\noindent
-\begin{{minipage}}[t][0.96\textheight][t]{{0.235\textwidth}}
-\fbox{{\parbox[c][2.0cm][c]{{0.94\linewidth}}{{\centering\color{{hydro}}\Large\bfseries HYDROBASIN\\\small Watershed Studio}}}}\\[2mm]
-\fbox{{\parbox[c][1.7cm][c]{{0.94\linewidth}}{{\centering\bfseries PLANO HIDROGRÁFICO\\Cuenca y red de drenaje}}}}\\[2mm]
-\small
-\begin{{tabular}}{{|p{{3.9cm}}|p{{3.8cm}}|}}\hline
-\textbf{{Área}} & {_n(summary.get('area_km2'))} km$^2$ \\\hline
-\textbf{{Perímetro}} & {_n(summary.get('perimetro_km'))} km \\\hline
-\textbf{{Cauce principal}} & {_n(summary.get('main_channel_length_km'))} km \\\hline
-\textbf{{Subcuencas}} & {summary.get('subbasin_count', 'N/D')} \\\hline
-\textbf{{Strahler máx.}} & {summary.get('strahler_max', 'N/D')} \\\hline
-\textbf{{CRS}} & {_latex_escape(summary.get('crs_calculo') or 'N/D')} \\\hline
-\textbf{{Fuente DEM}} & {_latex_escape(summary.get('dem_source') or 'N/D')} \\\hline
-\textbf{{Fecha}} & {generated_at} \\\hline
-\end{{tabular}}\\[3mm]
-\textbf{{Perfil de elevación del cauce principal}}\\[1mm]
-{profile_block}
-\vfill
-\footnotesize Plano generado automáticamente. Las divisorias y drenajes son derivados del DEM y deben validarse para usos de diseño o cartografía oficial.
+def _plan_tex(summary: dict, figures: dict[str, str]) -> str:
+    return rf"""\documentclass[10pt]{{article}}
+\usepackage[utf8]{{inputenc}}
+\usepackage[T1]{{fontenc}}
+\usepackage[spanish]{{babel}}
+\usepackage[a3paper,landscape,margin=12mm]{{geometry}}
+\usepackage{{graphicx}}
+\usepackage{{array}}
+\usepackage{{booktabs}}
+\pagestyle{{empty}}
+\begin{{document}}
+\begin{{center}}
+{{\Large\bfseries PLANO HIDROGRÁFICO DE CUENCA}}\\[1mm]
+{{\small HydroBasin · CRS de cálculo: {_latex_escape(summary.get('crs_calculo') or 'N/D')}}}
+\end{{center}}
+\noindent
+\begin{{minipage}}[t]{{0.78\textwidth}}
+\centering\includegraphics[width=\linewidth,height=0.80\textheight,keepaspectratio]{{{figures['plan']}}}
 \end{{minipage}}\hfill
-\begin{{minipage}}[t][0.96\textheight][c]{{0.75\textwidth}}
-\centering\includegraphics[width=\linewidth,height=0.94\textheight,keepaspectratio]{{{figures['plan']}}}
+\begin{{minipage}}[t]{{0.20\textwidth}}
+\small
+\textbf{{CUADRO TÉCNICO}}\\[2mm]
+\begin{{tabular}}{{@{{}}p{{0.58\linewidth}}r@{{}}}}
+\toprule
+Área & {_n(summary.get('area_km2'))} km$^2$\\
+Perímetro & {_n(summary.get('perimetro_km'))} km\\
+Compacidad & {_n(summary.get('coeficiente_compacidad'),3)}\\
+Circularidad & {_n(summary.get('relacion_circularidad'),3)}\\
+Dens. drenaje & {_n(summary.get('densidad_drenaje_km_km2'),3)}\\
+Strahler máx. & {summary.get('strahler_max','N/D')}\\
+Subcuencas & {summary.get('subbasin_count','N/D')}\\
+Cauce princ. & {_n(summary.get('main_channel_length_km'))} km\\
+Pendiente & {_n(summary.get('main_channel_slope_percent'))}\%\\
+Tc Kirpich & {_n(summary.get('tc_kirpich_min'))} min\\
+Tc Témez & {_n(summary.get('tc_temez_min'))} min\\
+\bottomrule
+\end{{tabular}}\\[4mm]
+\textbf{{Fuente DEM}}\\
+{_latex_escape(summary.get('dem_source') or 'N/D')}\\[3mm]
+\textbf{{Exutorio ajustado}}\\
+{_latex_escape(summary.get('outlet_snapped') or 'N/D')}\\[3mm]
+\textbf{{Nota}}\\
+Resultados derivados del DEM y del umbral de drenaje seleccionado. Verificar contra información de campo y criterios del proyecto.
 \end{{minipage}}
 \end{{document}}
 """
-    tex_path.write_text(tex, encoding="utf-8")
-    return tex_path.name
 
 
 def _find_tectonic() -> str | None:
-    return shutil.which("tectonic") or shutil.which("tecto")
+    return shutil.which("tectonic") or shutil.which("tectonic.exe")
 
 
-def _compile_latex(output_dir: Path, tex_name: str) -> dict:
-    tectonic = _find_tectonic()
-    pdf_path = output_dir / Path(tex_name).with_suffix(".pdf").name
-    if not tectonic:
-        return {"compiled": False, "pdf": None, "compiler_found": False, "compiler_path": None, "compile_error": "No se encontró Tectonic. Ejecuta pip install -r requirements.txt en el backend."}
+def _compile(tex_path: Path, output_dir: Path) -> tuple[Path | None, str | None]:
+    compiler = _find_tectonic()
+    if not compiler:
+        return None, "Tectonic no está disponible en PATH."
     try:
-        completed = subprocess.run([tectonic, tex_name, "--keep-logs", "--keep-intermediates"], cwd=output_dir, check=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        output = (completed.stdout or "") + "\n" + (completed.stderr or "")
-        if completed.returncode != 0 or not pdf_path.exists():
-            lines = [line.strip() for line in output.splitlines() if line.strip()]
-            detail = " | ".join(lines[-16:])[-3200:]
-            return {"compiled": False, "pdf": None, "compiler_found": True, "compiler_path": tectonic, "compile_error": detail or f"Tectonic terminó con código {completed.returncode}."}
-        return {"compiled": True, "pdf": pdf_path.name, "compiler_found": True, "compiler_path": tectonic, "compile_error": None}
-    except subprocess.TimeoutExpired:
-        return {"compiled": False, "pdf": None, "compiler_found": True, "compiler_path": tectonic, "compile_error": "La compilación con Tectonic superó 300 segundos."}
+        completed = subprocess.run(
+            [compiler, tex_path.name, "--outdir", str(output_dir)],
+            cwd=tex_path.parent,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
     except Exception as exc:
-        return {"compiled": False, "pdf": None, "compiler_found": True, "compiler_path": tectonic, "compile_error": str(exc)}
+        return None, str(exc)
+    pdf_path = output_dir / f"{tex_path.stem}.pdf"
+    if completed.returncode != 0 or not pdf_path.exists():
+        detail = (completed.stderr or completed.stdout or "Error desconocido de compilación").strip()
+        return None, detail[-1800:]
+    return pdf_path, None
 
 
 def generar_informes(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None, main_channel=None) -> dict:
-    """Genera y compila el informe técnico y un plano hidrográfico independiente."""
-    tex_name = _generar_fuente_latex(output_dir, summary, figures, subbasins=subbasins)
-    plan_tex = _generar_plano_latex(output_dir, summary, figures)
-    report_result = _compile_latex(output_dir, tex_name)
-    plan_result = _compile_latex(output_dir, plan_tex)
-    compiled = bool(report_result["compiled"] and plan_result["compiled"])
-    errors = [item for item in [report_result.get("compile_error"), plan_result.get("compile_error")] if item]
+    tex_path = output_dir / "informe_hydrobasin.tex"
+    plan_tex_path = output_dir / "plano_hidrografico.tex"
+    tex_path.write_text(_report_tex(summary, figures, subbasins), encoding="utf-8")
+    plan_tex_path.write_text(_plan_tex(summary, figures), encoding="utf-8")
+
+    report_pdf, report_error = _compile(tex_path, output_dir)
+    plan_pdf, plan_error = _compile(plan_tex_path, output_dir)
+    errors = [error for error in (report_error, plan_error) if error]
     return {
-        "tex": tex_name,
-        "pdf": report_result["pdf"],
-        "plan_tex": plan_tex,
-        "plan_pdf": plan_result["pdf"],
-        "compiled": compiled,
-        "pdf_engine": "tectonic",
-        "compiler_found": report_result["compiler_found"],
-        "compiler_path": report_result["compiler_path"],
+        "tex": tex_path.name,
+        "pdf": report_pdf.name if report_pdf else None,
+        "plan_tex": plan_tex_path.name,
+        "plan_pdf": plan_pdf.name if plan_pdf else None,
+        "compiled": bool(report_pdf and plan_pdf),
+        "compiler_found": bool(_find_tectonic()),
         "compile_error": " | ".join(errors) if errors else None,
     }
