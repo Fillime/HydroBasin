@@ -5,6 +5,7 @@ import {
   BarChart3,
   ChevronRight,
   CircleDot,
+  Copy,
   Database,
   Download,
   Droplets,
@@ -21,6 +22,7 @@ import {
   Settings,
   SlidersHorizontal,
   Terminal,
+  Trash2,
   Waves,
 } from 'lucide-react'
 import {
@@ -38,6 +40,16 @@ import DemAreaSelection, { type DemBounds } from './components/DemAreaSelection'
 import DemSourcePicker from './components/DemSourcePicker'
 import DemStartMode, { type DemStartModeValue } from './components/DemStartMode'
 import ProcessLog, { type ProcessLogEntry } from './components/ProcessLog'
+import {
+  createProjectId,
+  deleteProject,
+  getActiveProjectId,
+  getProject,
+  listProjects,
+  putProject,
+  setActiveProjectId,
+  type StoredProject,
+} from './services/projectStore'
 
 type Summary = {
   area_km2?: number
@@ -127,7 +139,34 @@ type StreamEvent = {
   report?: ReportInfo
 }
 
+type ProjectPayload = {
+  serverDemId: string
+  localDemFileName: string
+  demPreview: DemPreview | null
+  outlet: Outlet
+  startMode: DemStartModeValue
+  minimumAreaKm2: string
+  summary: Summary | null
+  reportInfo: ReportInfo | null
+  watershedGeoJson: GeoJsonData
+  drainageGeoJson: GeoJsonData
+  subbasinsGeoJson: GeoJsonData
+  jobId: string
+  activeStep: number
+  aoiBounds: DemBounds | null
+  selectedDemSource: string
+  demAreaKm2: number | null
+  demSourceLabel: string
+  layers: Record<string, boolean>
+}
+
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
+const DEFAULT_OUTLET = { lat: 7.06, lng: -73.85 }
+const DEFAULT_LAYERS: Record<string, boolean> = {
+  'Mapa base': true, DEM: true, Hillshade: false, 'DEM corregido': false,
+  'Dirección de flujo': false, Acumulación: false, Cuenca: true, Subcuencas: true,
+  'Red de drenaje': true, Exutorio: true,
+}
 
 function MapClickHandler({ onPick, enabled = true }: { onPick: (outlet: Outlet) => void; enabled?: boolean }) {
   useMapEvents({ click: (event) => { if (enabled) onPick({ lat: event.latlng.lat, lng: event.latlng.lng }) } })
@@ -172,10 +211,11 @@ const viewLabels: Record<ViewId, string> = {
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null)
+  const [localDemFileName, setLocalDemFileName] = useState('')
   const [serverDemId, setServerDemId] = useState('')
   const [demPreview, setDemPreview] = useState<DemPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [outlet, setOutlet] = useState<Outlet>({ lat: 7.06, lng: -73.85 })
+  const [outlet, setOutlet] = useState<Outlet>(DEFAULT_OUTLET)
   const [startMode, setStartMode] = useState<DemStartModeValue>('outlet')
   const [minimumAreaKm2, setMinimumAreaKm2] = useState('5')
   const [loading, setLoading] = useState(false)
@@ -201,11 +241,14 @@ export default function App() {
   const [demDownloading, setDemDownloading] = useState(false)
   const [demDownloadMessage, setDemDownloadMessage] = useState('')
   const [demSourceLabel, setDemSourceLabel] = useState('GeoTIFF cargado por el usuario')
-  const [layers, setLayers] = useState<Record<string, boolean>>({
-    'Mapa base': true, DEM: true, Hillshade: false, 'DEM corregido': false,
-    'Dirección de flujo': false, Acumulación: false, Cuenca: true, Subcuencas: true,
-    'Red de drenaje': true, Exutorio: true,
-  })
+  const [layers, setLayers] = useState<Record<string, boolean>>(DEFAULT_LAYERS)
+
+  const [projectId, setProjectId] = useState('')
+  const [projectName, setProjectName] = useState('Cuenca sin título')
+  const [projectCreatedAt, setProjectCreatedAt] = useState('')
+  const [projects, setProjects] = useState<StoredProject<ProjectPayload>[]>([])
+  const [projectsReady, setProjectsReady] = useState(false)
+  const [saveStatus, setSaveStatus] = useState('Preparando almacenamiento…')
 
   const hasDem = Boolean(file || serverDemId)
   const fileSize = useMemo(() => file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : '', [file])
@@ -215,90 +258,201 @@ export default function App() {
     setSummary(null); setReportInfo(null); setWatershedGeoJson(null); setDrainageGeoJson(null); setSubbasinsGeoJson(null); setJobId('')
   }
 
-  const newProject = () => {
-    setFile(null); setServerDemId(''); setDemPreview(null); setOutlet({ lat: 7.06, lng: -73.85 }); setStartMode('outlet')
-    setMinimumAreaKm2('5'); setError(''); setActiveStep(0)
-    setActiveView('analysis'); setProcessLogs([]); setProcessProgress(0); setLogOpen(false)
+  const resetWorkspace = () => {
+    setFile(null); setLocalDemFileName(''); setServerDemId(''); setDemPreview(null); setOutlet(DEFAULT_OUTLET); setStartMode('outlet')
+    setMinimumAreaKm2('5'); setError(''); setActiveStep(0); setProcessLogs([]); setProcessProgress(0); setLogOpen(false)
     setAoiBounds(null); setSelectingDemArea(false); setDemSources([]); setDemAreaKm2(null); setDemApiConfigured(null)
     setSelectedDemSource('COP30'); setDemDownloadMessage(''); setDemSourceLabel('GeoTIFF cargado por el usuario')
-    clearResults()
+    setLayers(DEFAULT_LAYERS); clearResults()
   }
 
-  const changeStartMode = (mode: DemStartModeValue) => {
-    setStartMode(mode)
-    setSelectingDemArea(false)
-    setError('')
-    setDemDownloadMessage('')
-    if (!hasDem) {
-      setDemSources([])
-      setDemAreaKm2(null)
-      setAoiBounds(null)
+  const currentPayload = (): ProjectPayload => ({
+    serverDemId,
+    localDemFileName: file?.name || localDemFileName,
+    demPreview,
+    outlet,
+    startMode,
+    minimumAreaKm2,
+    summary,
+    reportInfo,
+    watershedGeoJson,
+    drainageGeoJson,
+    subbasinsGeoJson,
+    jobId,
+    activeStep,
+    aoiBounds,
+    selectedDemSource,
+    demAreaKm2,
+    demSourceLabel,
+    layers,
+  })
+
+  const persistCurrentProject = async () => {
+    if (!projectsReady || !projectId) return
+    const now = new Date().toISOString()
+    const project: StoredProject<ProjectPayload> = {
+      id: projectId,
+      name: projectName.trim() || 'Cuenca sin título',
+      createdAt: projectCreatedAt || now,
+      updatedAt: now,
+      payload: currentPayload(),
+    }
+    setSaveStatus('Guardando…')
+    await putProject(project)
+    setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)))
+    setSaveStatus('Guardado localmente')
+  }
+
+  const restoreProject = (project: StoredProject<ProjectPayload>) => {
+    const p = project.payload
+    setProjectId(project.id); setProjectName(project.name); setProjectCreatedAt(project.createdAt); setActiveProjectId(project.id)
+    setFile(null); setLocalDemFileName(p.localDemFileName || ''); setServerDemId(p.serverDemId || ''); setDemPreview(p.demPreview || null)
+    setOutlet(p.outlet || DEFAULT_OUTLET); setStartMode(p.startMode || 'outlet'); setMinimumAreaKm2(p.minimumAreaKm2 || '5')
+    setSummary(p.summary || null); setReportInfo(p.reportInfo || null); setWatershedGeoJson(p.watershedGeoJson || null)
+    setDrainageGeoJson(p.drainageGeoJson || null); setSubbasinsGeoJson(p.subbasinsGeoJson || null); setJobId(p.jobId || '')
+    setActiveStep(p.activeStep ?? 0); setAoiBounds(p.aoiBounds || null); setSelectedDemSource(p.selectedDemSource || 'COP30')
+    setDemAreaKm2(p.demAreaKm2 ?? null); setDemSourceLabel(p.demSourceLabel || 'GeoTIFF cargado por el usuario')
+    setLayers({ ...DEFAULT_LAYERS, ...(p.layers || {}) }); setDemSources([]); setDemApiConfigured(null); setDemDownloadMessage('')
+    setProcessLogs([]); setProcessProgress(p.summary ? 100 : 0); setError(''); setSelectingDemArea(false); setLogOpen(false)
+    setActiveView(p.summary ? 'results' : 'analysis'); setSaveStatus('Guardado localmente')
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const stored = await listProjects<ProjectPayload>()
+        if (cancelled) return
+        setProjects(stored)
+        const activeId = getActiveProjectId()
+        const active = activeId ? await getProject<ProjectPayload>(activeId) : null
+        const project = active || stored[0] || null
+        if (cancelled) return
+        if (project) {
+          restoreProject(project)
+        } else {
+          const id = createProjectId()
+          const now = new Date().toISOString()
+          setProjectId(id); setProjectName('Cuenca sin título'); setProjectCreatedAt(now); setActiveProjectId(id)
+        }
+        setProjectsReady(true)
+        setSaveStatus('Guardado localmente')
+      } catch (err) {
+        if (!cancelled) {
+          const id = createProjectId()
+          setProjectId(id); setProjectCreatedAt(new Date().toISOString()); setProjectsReady(true)
+          setSaveStatus('Almacenamiento local no disponible')
+          setError(err instanceof Error ? err.message : 'No fue posible abrir los proyectos locales.')
+        }
+      }
+    })()
+    return () => { cancelled = true }
+    // La hidratación debe ejecutarse una sola vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!projectsReady || !projectId || loading || demDownloading || previewLoading) return
+    const timer = window.setTimeout(() => { void persistCurrentProject().catch(() => setSaveStatus('No se pudo guardar')) }, 450)
+    return () => window.clearTimeout(timer)
+    // El autoguardado sigue únicamente estado serializable del proyecto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectsReady, projectId, projectName, serverDemId, localDemFileName, demPreview, outlet, startMode, minimumAreaKm2, summary, reportInfo, watershedGeoJson, drainageGeoJson, subbasinsGeoJson, jobId, activeStep, aoiBounds, selectedDemSource, demAreaKm2, demSourceLabel, layers])
+
+  const newProject = async () => {
+    try { await persistCurrentProject() } catch { /* El proyecto nuevo puede crearse aunque falle el guardado anterior. */ }
+    resetWorkspace()
+    const id = createProjectId()
+    const now = new Date().toISOString()
+    setProjectId(id); setProjectName('Cuenca sin título'); setProjectCreatedAt(now); setActiveProjectId(id)
+    setActiveView('analysis'); setSaveStatus('Proyecto nuevo')
+  }
+
+  const openStoredProject = async (id: string) => {
+    if (id === projectId) { setActiveView('analysis'); return }
+    try {
+      await persistCurrentProject()
+      const project = await getProject<ProjectPayload>(id)
+      if (!project) throw new Error('El proyecto ya no existe en el almacenamiento local.')
+      restoreProject(project)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible abrir el proyecto.')
     }
   }
 
+  const duplicateStoredProject = async (project: StoredProject<ProjectPayload>) => {
+    const now = new Date().toISOString()
+    const copy: StoredProject<ProjectPayload> = {
+      ...project,
+      id: createProjectId(),
+      name: `${project.name} · copia`,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await putProject(copy)
+    setProjects((current) => [copy, ...current])
+  }
+
+  const removeStoredProject = async (id: string) => {
+    await deleteProject(id)
+    const remaining = projects.filter((item) => item.id !== id)
+    setProjects(remaining)
+    if (id !== projectId) return
+    if (remaining.length > 0) {
+      restoreProject(remaining[0])
+    } else {
+      resetWorkspace()
+      const nextId = createProjectId()
+      const now = new Date().toISOString()
+      setProjectId(nextId); setProjectName('Cuenca sin título'); setProjectCreatedAt(now); setActiveProjectId(nextId); setActiveView('analysis')
+    }
+  }
+
+  const changeStartMode = (mode: DemStartModeValue) => {
+    setStartMode(mode); setSelectingDemArea(false); setError(''); setDemDownloadMessage('')
+    if (!hasDem) { setDemSources([]); setDemAreaKm2(null); setAoiBounds(null) }
+  }
+
   const inspectDemFile = async (selected: File, sourceLabel: string) => {
-    setFile(selected); setServerDemId(''); setDemPreview(null); setError(''); clearResults(); setActiveStep(1); setActiveView('analysis')
-    setDemSourceLabel(sourceLabel)
-    setPreviewLoading(true)
+    setFile(selected); setLocalDemFileName(selected.name); setServerDemId(''); setDemPreview(null); setError(''); clearResults(); setActiveStep(1); setActiveView('analysis')
+    setDemSourceLabel(sourceLabel); setPreviewLoading(true)
     try {
-      const body = new FormData()
-      body.append('dem', selected)
+      const body = new FormData(); body.append('dem', selected)
       const response = await fetch('/api/analysis/dem-preview', { method: 'POST', body })
       const data = await response.json()
       if (!response.ok) throw new Error(data.detail || 'No fue posible leer la extensión del DEM.')
-      setDemPreview(data)
-      setLayers((current) => ({ ...current, DEM: true }))
+      setDemPreview(data); setLayers((current) => ({ ...current, DEM: true }))
       const b = data.bounds_wgs84 as Bounds
       setOutlet({ lat: (b.south + b.north) / 2, lng: (b.west + b.east) / 2 })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible inspeccionar el GeoTIFF.')
-    } finally {
-      setPreviewLoading(false)
-    }
+    } finally { setPreviewLoading(false) }
   }
 
   const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null
-    if (!selected) return
-    await inspectDemFile(selected, 'GeoTIFF cargado por el usuario')
+    if (selected) await inspectDemFile(selected, 'GeoTIFF cargado por el usuario')
   }
 
   const loadDemCatalog = async (bounds: DemBounds) => {
     setError('')
     try {
-      const params = new URLSearchParams({
-        south: String(bounds.south), north: String(bounds.north), west: String(bounds.west), east: String(bounds.east),
-      })
+      const params = new URLSearchParams({ south: String(bounds.south), north: String(bounds.north), west: String(bounds.west), east: String(bounds.east) })
       const response = await fetch(`/api/analysis/dem-sources?${params.toString()}`)
       const data = await response.json() as DemCatalog & { detail?: string }
       if (!response.ok) throw new Error(data.detail || 'No fue posible consultar las fuentes DEM.')
-      setDemSources(data.sources)
-      setSelectedDemSource(data.recommended_source)
-      setDemAreaKm2(data.area_km2)
-      setDemApiConfigured(data.api_configured)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible consultar las fuentes DEM.')
-    }
+      setDemSources(data.sources); setSelectedDemSource(data.recommended_source); setDemAreaKm2(data.area_km2); setDemApiConfigured(data.api_configured)
+    } catch (err) { setError(err instanceof Error ? err.message : 'No fue posible consultar las fuentes DEM.') }
   }
 
   const loadDemCatalogForOutlet = async (point: Outlet) => {
     const radiusKm = 25
     const dLat = radiusKm / 111.32
     const dLng = radiusKm / Math.max(1, 111.32 * Math.cos(point.lat * Math.PI / 180))
-    const bounds: DemBounds = {
-      west: point.lng - dLng,
-      east: point.lng + dLng,
-      south: point.lat - dLat,
-      north: point.lat + dLat,
-    }
-    await loadDemCatalog(bounds)
+    await loadDemCatalog({ west: point.lng - dLng, east: point.lng + dLng, south: point.lat - dLat, north: point.lat + dLat })
   }
 
-  const onDemAreaSelected = (bounds: DemBounds) => {
-    setAoiBounds(bounds)
-    setSelectingDemArea(false)
-    void loadDemCatalog(bounds)
-  }
+  const onDemAreaSelected = (bounds: DemBounds) => { setAoiBounds(bounds); setSelectingDemArea(false); void loadDemCatalog(bounds) }
 
   const pollDemJob = async (jobIdValue: string): Promise<DemDownloadJob> => {
     for (let attempt = 0; attempt < 1200; attempt += 1) {
@@ -315,15 +469,8 @@ export default function App() {
 
   const activateServerDem = (ready: DemDownloadJob, sourceLabel: string, preserveOutlet = false) => {
     if (!ready.preview || !ready.dem_id) throw new Error('El servidor no devolvió un DEM válido.')
-    setFile(null)
-    setServerDemId(ready.dem_id)
-    setDemPreview(ready.preview)
-    setDemSourceLabel(sourceLabel)
-    setLayers((current) => ({ ...current, DEM: true }))
-    setActiveStep(1)
-    setActiveView('analysis')
-    setAoiBounds(ready.preview.bounds_wgs84)
-    clearResults()
+    setFile(null); setLocalDemFileName(''); setServerDemId(ready.dem_id); setDemPreview(ready.preview); setDemSourceLabel(sourceLabel)
+    setLayers((current) => ({ ...current, DEM: true })); setActiveStep(1); setActiveView('analysis'); setAoiBounds(ready.preview.bounds_wgs84); clearResults()
     if (!preserveOutlet) {
       const b = ready.preview.bounds_wgs84
       setOutlet({ lat: (b.south + b.north) / 2, lng: (b.west + b.east) / 2 })
@@ -336,47 +483,30 @@ export default function App() {
     if (!aoiBounds || !selectedDemSource) return
     setDemDownloading(true); setDemDownloadMessage('Iniciando descarga en el servidor…'); setError('')
     try {
-      const params = new URLSearchParams({
-        source: selectedDemSource,
-        south: String(aoiBounds.south), north: String(aoiBounds.north), west: String(aoiBounds.west), east: String(aoiBounds.east),
-      })
+      const params = new URLSearchParams({ source: selectedDemSource, south: String(aoiBounds.south), north: String(aoiBounds.north), west: String(aoiBounds.west), east: String(aoiBounds.east) })
       const startResponse = await fetch(`/api/analysis/dem-download-jobs?${params.toString()}`, { method: 'POST' })
       const started = await startResponse.json() as { job_id?: string; detail?: string }
       if (!startResponse.ok || !started.job_id) throw new Error(started.detail || 'No fue posible iniciar la descarga del DEM.')
       const ready = await pollDemJob(started.job_id)
       const source = demSources.find((item) => item.id === selectedDemSource)
       activateServerDem(ready, `${source?.name || selectedDemSource} · OpenTopography`)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'No fue posible descargar el DEM.'
-      setError(message)
-    } finally {
-      setDemDownloading(false)
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : 'No fue posible descargar el DEM.') }
+    finally { setDemDownloading(false) }
   }
 
   const downloadAutomaticDem = async () => {
     if (!selectedDemSource) return
-    setDemDownloading(true)
-    setDemDownloadMessage('Iniciando búsqueda automática de la extensión necesaria…')
-    setError('')
+    setDemDownloading(true); setDemDownloadMessage('Iniciando búsqueda automática de la extensión necesaria…'); setError('')
     try {
-      const params = new URLSearchParams({
-        source: selectedDemSource,
-        lat: String(outlet.lat),
-        lng: String(outlet.lng),
-      })
+      const params = new URLSearchParams({ source: selectedDemSource, lat: String(outlet.lat), lng: String(outlet.lng) })
       const startResponse = await fetch(`/api/analysis/dem-auto-jobs?${params.toString()}`, { method: 'POST' })
       const started = await startResponse.json() as { job_id?: string; detail?: string }
       if (!startResponse.ok || !started.job_id) throw new Error(started.detail || 'No fue posible iniciar la obtención automática del DEM.')
       const ready = await pollDemJob(started.job_id)
       const source = demSources.find((item) => item.id === selectedDemSource)
       activateServerDem(ready, `${source?.name || selectedDemSource} · OpenTopography · extensión automática`, true)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'No fue posible obtener automáticamente el DEM.'
-      setError(message)
-    } finally {
-      setDemDownloading(false)
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : 'No fue posible obtener automáticamente el DEM.') }
+    finally { setDemDownloading(false) }
   }
 
   const pickOutlet = (point: Outlet) => {
@@ -389,35 +519,25 @@ export default function App() {
 
   const runAnalysis = async (event: FormEvent) => {
     event.preventDefault()
-    if (!hasDem) { setError('Carga o descarga primero un DEM GeoTIFF.'); return }
+    if (!hasDem) {
+      setError(localDemFileName ? `El proyecto recuerda ${localDemFileName}, pero por seguridad el navegador no puede reabrir archivos locales automáticamente. Selecciónalo de nuevo.` : 'Carga o descarga primero un DEM GeoTIFF.')
+      return
+    }
     const area = Number(minimumAreaKm2)
     if (!Number.isFinite(area) || area <= 0) { setError('El área mínima de aporte debe ser mayor que cero.'); return }
 
     const body = new FormData()
     if (serverDemId) body.append('dem_id', serverDemId)
     else if (file) body.append('dem', file)
-    body.append('x', outlet.lng.toString())
-    body.append('y', outlet.lat.toString())
-    body.append('point_crs', 'EPSG:4326')
-    body.append('minimum_area_km2', area.toString())
-    body.append('dem_source', demSourceLabel)
+    body.append('x', outlet.lng.toString()); body.append('y', outlet.lat.toString()); body.append('point_crs', 'EPSG:4326')
+    body.append('minimum_area_km2', area.toString()); body.append('dem_source', demSourceLabel)
 
     const startedAt = performance.now()
     const addLog = (level: ProcessLogEntry['level'], message: string) => {
-      setProcessLogs((current) => [...current, {
-        id: Date.now() + current.length,
-        level,
-        message,
-        elapsed: (performance.now() - startedAt) / 1000,
-      }])
+      setProcessLogs((current) => [...current, { id: Date.now() + current.length, level, message, elapsed: (performance.now() - startedAt) / 1000 }])
     }
 
-    setLoading(true)
-    setError('')
-    setLogOpen(true)
-    setProcessLogs([])
-    setProcessProgress(0)
-    clearResults()
+    setLoading(true); setError(''); setLogOpen(true); setProcessLogs([]); setProcessProgress(0); clearResults()
     addLog('info', `Preparando ${demPreview?.filename || file?.name || 'DEM'} para el análisis…`)
 
     try {
@@ -427,65 +547,35 @@ export default function App() {
         throw new Error(data?.detail || 'No fue posible iniciar el análisis.')
       }
       if (!response.body) throw new Error('El servidor no devolvió un flujo de progreso.')
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let streamError = ''
-      let resultReceived = false
-
+      const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let streamError = ''; let resultReceived = false
       while (true) {
         const { value, done } = await reader.read()
         buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
+        const lines = buffer.split('\n'); buffer = lines.pop() || ''
         for (const line of lines) {
           if (!line.trim()) continue
           const item = JSON.parse(line) as StreamEvent
-          if (item.type === 'log' && item.message) {
-            addLog(item.level || 'info', item.message)
-            if (typeof item.percent === 'number') setProcessProgress(item.percent)
-          }
-          if (item.type === 'error') {
-            streamError = item.message || 'Error durante el procesamiento.'
-            addLog('error', streamError)
-            setProcessProgress(item.percent ?? 100)
-          }
+          if (item.type === 'log' && item.message) { addLog(item.level || 'info', item.message); if (typeof item.percent === 'number') setProcessProgress(item.percent) }
+          if (item.type === 'error') { streamError = item.message || 'Error durante el procesamiento.'; addLog('error', streamError); setProcessProgress(item.percent ?? 100) }
           if (item.type === 'result') {
-            resultReceived = true
-            setSummary(item.summary ?? null)
-            setReportInfo(item.report ?? null)
-            setWatershedGeoJson(item.watershed_geojson ?? null)
-            setDrainageGeoJson(item.drainage_geojson ?? null)
-            setSubbasinsGeoJson(item.subbasins_geojson ?? null)
-            setJobId(item.job_id ?? '')
+            resultReceived = true; setSummary(item.summary ?? null); setReportInfo(item.report ?? null); setWatershedGeoJson(item.watershed_geojson ?? null)
+            setDrainageGeoJson(item.drainage_geojson ?? null); setSubbasinsGeoJson(item.subbasins_geojson ?? null); setJobId(item.job_id ?? '')
             setLayers((current) => ({ ...current, Cuenca: true, Subcuencas: true, 'Red de drenaje': true }))
           }
         }
         if (done) break
       }
-
       if (streamError) throw new Error(streamError)
       if (!resultReceived) throw new Error('El procesamiento terminó sin devolver resultados.')
-      setProcessProgress(100)
-      setActiveStep(8)
-      setActiveView('results')
+      setProcessProgress(100); setActiveStep(8); setActiveView('results')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error inesperado.'
       setError(message)
-      setProcessLogs((current) => current.some((item) => item.level === 'error' && item.message === message)
-        ? current
-        : [...current, { id: Date.now(), level: 'error', message, elapsed: (performance.now() - startedAt) / 1000 }])
-    } finally {
-      setLoading(false)
-    }
+      setProcessLogs((current) => current.some((item) => item.level === 'error' && item.message === message) ? current : [...current, { id: Date.now(), level: 'error', message, elapsed: (performance.now() - startedAt) / 1000 }])
+    } finally { setLoading(false) }
   }
 
-  const downloadArtifact = (path: string) => {
-    if (!jobId) return
-    window.open(`/api/analysis/jobs/${jobId}/artifact/${path}`, '_blank')
-  }
+  const downloadArtifact = (path: string) => { if (jobId) window.open(`/api/analysis/jobs/${jobId}/artifact/${path}`, '_blank') }
 
   const resultMetrics = summary ? (
     <div className="metrics-list">
@@ -517,9 +607,7 @@ export default function App() {
   const drainageControl = (
     <>
       <label className="field">Área mínima de aporte (km²)<input value={minimumAreaKm2} onChange={(e) => setMinimumAreaKm2(e.target.value)} type="number" min="0.001" step="any" inputMode="decimal" /></label>
-      <div className="preset-row">
-        {[1, 5, 10, 25].map((value) => <button type="button" key={value} className={Number(minimumAreaKm2) === value ? 'active' : ''} onClick={() => setMinimumAreaKm2(String(value))}>{value} km²</button>)}
-      </div>
+      <div className="preset-row">{[1, 5, 10, 25].map((value) => <button type="button" key={value} className={Number(minimumAreaKm2) === value ? 'active' : ''} onClick={() => setMinimumAreaKm2(String(value))}>{value} km²</button>)}</div>
       <p className="helper">Puedes usar valores enteros o decimales. HydroBasin calcula automáticamente el umbral en celdas.</p>
     </>
   )
@@ -551,6 +639,8 @@ export default function App() {
     </section>
   ) : null
 
+  const projectStatus = (project: StoredProject<ProjectPayload>) => project.payload.summary ? 'Análisis completado' : project.payload.serverDemId ? 'DEM listo' : project.payload.localDemFileName ? 'DEM local · requiere archivo' : 'Sin procesar'
+
   const renderInspector = () => {
     if (activeView === 'home') return (
       <div className="inspector-content">
@@ -562,17 +652,35 @@ export default function App() {
 
     if (activeView === 'projects') return (
       <div className="inspector-content">
-        <div className="inspector-header"><span className="section-label">PROYECTOS</span><h1>Proyecto actual</h1><p>Por ahora HydroBasin trabaja con un proyecto local en memoria.</p></div>
-        <section className="form-section project-card"><strong>Cuenca sin título</strong><span>{demPreview?.filename || file?.name || 'Sin DEM cargado'}</span><span>{summary ? 'Análisis completado' : hasDem ? 'DEM listo' : 'Sin procesar'}</span></section>
-        <div className="run-area"><button className="secondary-button wide" onClick={newProject}><Plus size={14} /> Nuevo proyecto</button></div>
+        <div className="inspector-header"><span className="section-label">PROYECTOS</span><h1>Proyectos locales</h1><p>Se guardan automáticamente en este navegador. Los DEM descargados permanecen en el backend.</p></div>
+        <section className="form-section current-project-editor">
+          <label className="field">Nombre del proyecto<input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Ej. Cuenca Río Lato" /></label>
+          <div className="project-save-state"><i className={saveStatus === 'Guardado localmente' ? 'saved' : ''} /><span>{saveStatus}</span></div>
+        </section>
+        <div className="project-list-local">
+          {projects.length === 0 && <div className="empty-state"><FolderOpen size={18} /><span>El proyecto actual se guardará automáticamente cuando hagas un cambio.</span></div>}
+          {projects.map((project) => (
+            <article className={`local-project-card ${project.id === projectId ? 'active' : ''}`} key={project.id}>
+              <button type="button" className="local-project-main" onClick={() => void openStoredProject(project.id)}>
+                <strong>{project.name}</strong>
+                <span>{projectStatus(project)}</span>
+                <small>{project.payload.summary?.area_km2 ? `${project.payload.summary.area_km2.toFixed(2)} km² · ` : ''}{new Date(project.updatedAt).toLocaleString()}</small>
+              </button>
+              <div className="local-project-actions">
+                <button type="button" title="Duplicar" onClick={() => void duplicateStoredProject(project)}><Copy size={13} /></button>
+                <button type="button" title="Eliminar" onClick={() => void removeStoredProject(project.id)}><Trash2 size={13} /></button>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="run-area"><button className="secondary-button wide" onClick={() => void newProject()}><Plus size={14} /> Nuevo proyecto</button></div>
       </div>
     )
 
     if (activeView === 'results') return (
       <div className="inspector-content">
         <div className="inspector-header"><span className="section-label">RESULTADOS</span><h1>Cuenca delimitada</h1><p>{jobId ? `Proceso ${jobId.slice(0, 8)}` : 'Todavía no hay un proceso calculado.'}</p></div>
-        <section className="results-section">{resultMetrics}</section>
-        {reportDownloads}
+        <section className="results-section">{resultMetrics}</section>{reportDownloads}
         <div className="run-area"><button className="secondary-button wide" onClick={() => setActiveView('analysis')}><SlidersHorizontal size={14} /> Ajustar análisis</button></div>
       </div>
     )
@@ -581,6 +689,7 @@ export default function App() {
       <div className="inspector-content">
         <div className="inspector-header"><span className="section-label">DATOS</span><h1>Entradas y capas</h1><p>Información disponible para el proyecto actual.</p></div>
         <section className="form-section">{demInfo || <div className="empty-state"><Mountain size={18} /><span>Carga o descarga un DEM para ver sus metadatos.</span></div>}</section>
+        {localDemFileName && !serverDemId && !file && <div className="error-box inline-error">Este proyecto usaba {localDemFileName}. El navegador conserva el proyecto, pero debes volver a seleccionar el GeoTIFF local para recalcular.</div>}
       </div>
     )
 
@@ -588,30 +697,20 @@ export default function App() {
       <div className="inspector-content">
         <div className="inspector-header"><span className="section-label">CONFIGURACIÓN</span><h1>Parámetros</h1><p>Controla la densidad de la red y la subdivisión hidrológica.</p></div>
         <section className="form-section">{drainageControl}</section>
-        <div className="run-area"><button className="secondary-button wide" onClick={newProject}><RotateCcw size={14} /> Restablecer proyecto</button></div>
+        <div className="run-area"><button className="secondary-button wide" onClick={() => void newProject()}><RotateCcw size={14} /> Crear proyecto limpio</button></div>
       </div>
     )
 
     return (
       <>
         <form onSubmit={runAnalysis}>
-          <div className="inspector-header"><span className="section-label">ENTRADA</span><h1>Delimitación de cuenca</h1><p>Comienza desde un aforo, un área dibujada o un DEM propio.</p></div>
-
-          <section className="form-section">
-            <div className="form-section-heading"><strong>¿Cómo quieres comenzar?</strong><span>3 opciones</span></div>
-            <DemStartMode value={startMode} onChange={changeStartMode} />
-          </section>
+          <div className="inspector-header"><span className="section-label">ENTRADA</span><h1>Delimitación de cuenca</h1><p>{projectName} · comienza desde un aforo, un área dibujada o un DEM propio.</p></div>
+          <section className="form-section"><div className="form-section-heading"><strong>¿Cómo quieres comenzar?</strong><span>3 opciones</span></div><DemStartMode value={startMode} onChange={changeStartMode} /></section>
 
           {startMode === 'outlet' && <section className="form-section mode-panel">
             <div className="form-section-heading"><strong>Punto de aforo / exutorio</strong><span>Automático</span></div>
-            <div className="outlet-callout">
-              <CircleDot size={17} />
-              <div><strong>Marca el punto en el mapa</strong><span>HydroBasin empieza con un DEM alrededor del aforo y amplía la extensión si la divisoria toca algún borde.</span></div>
-            </div>
-            <div className="field-grid outlet-coordinates">
-              <label>Longitud<input value={outlet.lng} onChange={(e) => setOutlet((p) => ({ ...p, lng: Number(e.target.value) }))} type="number" step="any" /></label>
-              <label>Latitud<input value={outlet.lat} onChange={(e) => setOutlet((p) => ({ ...p, lat: Number(e.target.value) }))} type="number" step="any" /></label>
-            </div>
+            <div className="outlet-callout"><CircleDot size={17} /><div><strong>Marca el punto en el mapa</strong><span>HydroBasin empieza con un DEM alrededor del aforo y amplía la extensión si la divisoria toca algún borde.</span></div></div>
+            <div className="field-grid outlet-coordinates"><label>Longitud<input value={outlet.lng} onChange={(e) => setOutlet((p) => ({ ...p, lng: Number(e.target.value) }))} type="number" step="any" /></label><label>Latitud<input value={outlet.lat} onChange={(e) => setOutlet((p) => ({ ...p, lat: Number(e.target.value) }))} type="number" step="any" /></label></div>
             {openDataPicker}
             {demSources.length > 0 && <button type="button" className="primary-button wide auto-dem-button" disabled={demDownloading || demApiConfigured === false} onClick={downloadAutomaticDem}><Download size={14} /> {demDownloading ? 'Buscando extensión adecuada…' : 'Obtener DEM automáticamente'}</button>}
             {demDownloadMessage && <p className="download-status">{demDownloadMessage}</p>}
@@ -628,50 +727,26 @@ export default function App() {
 
           {startMode === 'file' && <section className="form-section mode-panel">
             <div className="form-section-heading"><strong>DEM propio</strong><span>GeoTIFF</span></div>
-            <label className={`upload-row ${file ? 'ready' : ''}`}>
-              <input type="file" accept=".tif,.tiff" onChange={onFile} />
-              <FileUp size={16} />
-              <div><strong>{file?.name || 'Seleccionar GeoTIFF'}</strong><span>{previewLoading ? 'Leyendo extensión…' : file ? `${fileSize} · ${demSourceLabel}` : '.tif o .tiff'}</span></div>
-            </label>
+            <label className={`upload-row ${file ? 'ready' : ''}`}><input type="file" accept=".tif,.tiff" onChange={onFile} /><FileUp size={16} /><div><strong>{file?.name || localDemFileName || 'Seleccionar GeoTIFF'}</strong><span>{previewLoading ? 'Leyendo extensión…' : file ? `${fileSize} · ${demSourceLabel}` : localDemFileName ? 'Vuelve a seleccionarlo para recalcular' : '.tif o .tiff'}</span></div></label>
           </section>}
 
-          {demPreview && <section className="form-section"><div className="form-section-heading"><strong>DEM activo</strong><span>{demPreview.crs}</span></div>{demInfo}<p className="helper">{serverDemId ? 'El GeoTIFF permanece en el backend y se analizará directamente allí.' : 'El mapa hizo zoom a la extensión del archivo.'}</p></section>}
-
-          {hasDem && <section className="form-section">
-            <div className="form-section-heading"><strong>Exutorio final</strong><span>EPSG:4326</span></div>
-            <div className="field-grid">
-              <label>Longitud<input value={outlet.lng} onChange={(e) => setOutlet((p) => ({ ...p, lng: Number(e.target.value) }))} type="number" step="any" /></label>
-              <label>Latitud<input value={outlet.lat} onChange={(e) => setOutlet((p) => ({ ...p, lat: Number(e.target.value) }))} type="number" step="any" /></label>
-            </div>
-            <p className="helper">Puedes ajustar el punto nuevamente sobre el DEM antes de ejecutar el análisis definitivo.</p>
-          </section>}
-
-          <section className="form-section">
-            <div className="form-section-heading"><strong>Red y subcuencas</strong><span>D8 · automático</span></div>
-            {drainageControl}
-          </section>
+          {demPreview && <section className="form-section"><div className="form-section-heading"><strong>DEM activo</strong><span>{demPreview.crs}</span></div>{demInfo}<p className="helper">{serverDemId ? 'El GeoTIFF permanece en el backend y el proyecto conserva su referencia.' : file ? 'El mapa hizo zoom a la extensión del archivo.' : 'Vista restaurada desde el proyecto; vuelve a cargar el archivo local si necesitas recalcular.'}</p></section>}
+          {hasDem && <section className="form-section"><div className="form-section-heading"><strong>Exutorio final</strong><span>EPSG:4326</span></div><div className="field-grid"><label>Longitud<input value={outlet.lng} onChange={(e) => setOutlet((p) => ({ ...p, lng: Number(e.target.value) }))} type="number" step="any" /></label><label>Latitud<input value={outlet.lat} onChange={(e) => setOutlet((p) => ({ ...p, lat: Number(e.target.value) }))} type="number" step="any" /></label></div><p className="helper">Puedes ajustar el punto nuevamente sobre el DEM antes de ejecutar el análisis definitivo.</p></section>}
+          <section className="form-section"><div className="form-section-heading"><strong>Red y subcuencas</strong><span>D8 · automático</span></div>{drainageControl}</section>
           {error && <div className="error-box">{error}</div>}
           <div className="run-area"><button className="primary-button" disabled={loading || previewLoading || demDownloading || !hasDem}><Play size={14} fill="currentColor" /> {loading ? 'Procesando…' : 'Ejecutar análisis'}</button></div>
         </form>
-        <section className="results-section"><div className="form-section-heading"><strong>Resultados</strong><span>{summary ? 'Calculados' : 'Pendientes'}</span></div>{resultMetrics}</section>
-        {reportDownloads}
+        <section className="results-section"><div className="form-section-heading"><strong>Resultados</strong><span>{summary ? 'Calculados' : 'Pendientes'}</span></div>{resultMetrics}</section>{reportDownloads}
       </>
     )
   }
 
   const layerRows = [
-    { name: 'Mapa base', available: true },
-    { name: 'DEM', available: Boolean(demPreview) },
-    { name: 'Hillshade', available: false },
-    { name: 'DEM corregido', available: false },
-    { name: 'Dirección de flujo', available: false },
-    { name: 'Acumulación', available: false },
-    { name: 'Cuenca', available: Boolean(watershedGeoJson) },
-    { name: 'Subcuencas', available: Boolean(subbasinsGeoJson) },
-    { name: 'Red de drenaje', available: Boolean(drainageGeoJson) },
-    { name: 'Exutorio', available: true },
+    { name: 'Mapa base', available: true }, { name: 'DEM', available: Boolean(demPreview) }, { name: 'Hillshade', available: false },
+    { name: 'DEM corregido', available: false }, { name: 'Dirección de flujo', available: false }, { name: 'Acumulación', available: false },
+    { name: 'Cuenca', available: Boolean(watershedGeoJson) }, { name: 'Subcuencas', available: Boolean(subbasinsGeoJson) },
+    { name: 'Red de drenaje', available: Boolean(drainageGeoJson) }, { name: 'Exutorio', available: true },
   ]
-
   const demBounds = demPreview ? [[demPreview.bounds_wgs84.south, demPreview.bounds_wgs84.west], [demPreview.bounds_wgs84.north, demPreview.bounds_wgs84.east]] as L.LatLngBoundsExpression : null
 
   return (
@@ -689,8 +764,8 @@ export default function App() {
       </aside>
 
       <aside className="module-sidebar">
-        <div className="module-title"><div><strong>HydroBasin</strong><span>Watershed Studio</span></div><button className="icon-button" title="Nuevo proyecto" onClick={newProject}><Plus size={14} /></button></div>
-        <div className="sidebar-section"><div className="section-label">PROYECTO</div><button className="nav-row active" onClick={() => setActiveView('analysis')}><MapIcon size={15} /><span>Cuenca sin título</span></button></div>
+        <div className="module-title"><div><strong>HydroBasin</strong><span>Watershed Studio</span></div><button className="icon-button" title="Nuevo proyecto" onClick={() => void newProject()}><Plus size={14} /></button></div>
+        <div className="sidebar-section"><div className="section-label">PROYECTO</div><button className="nav-row active" onClick={() => setActiveView('analysis')}><MapIcon size={15} /><span>{projectName || 'Cuenca sin título'}</span></button><button className="nav-row project-save-row" onClick={() => setActiveView('projects')}><FolderOpen size={15} /><span>{saveStatus}</span></button></div>
         <div className="sidebar-section workflow-list">
           <div className="section-label">FLUJO DE TRABAJO</div>
           {workflow.map(({ label, icon: Icon }, index) => {
@@ -698,21 +773,11 @@ export default function App() {
             return <button key={label} className={`workflow-row ${index === activeStep ? 'active' : ''}`} onClick={() => { setActiveStep(index); setActiveView('analysis') }}><span className={`step-dot ${done ? 'done' : ''}`}>{index + 1}</span><Icon size={14} /><span>{label}</span></button>
           })}
         </div>
-        <div className="sidebar-section layer-list">
-          <div className="section-label">CAPAS</div>
-          {layerRows.map(({ name, available }) => <label className={`layer-row ${available ? '' : 'disabled'}`} key={name}><input type="checkbox" checked={layers[name]} disabled={!available} onChange={(e) => setLayers((current) => ({ ...current, [name]: e.target.checked }))} /><span>{name}</span>{!available && <small>Pend.</small>}</label>)}
-        </div>
+        <div className="sidebar-section layer-list"><div className="section-label">CAPAS</div>{layerRows.map(({ name, available }) => <label className={`layer-row ${available ? '' : 'disabled'}`} key={name}><input type="checkbox" checked={layers[name]} disabled={!available} onChange={(e) => setLayers((current) => ({ ...current, [name]: e.target.checked }))} /><span>{name}</span>{!available && <small>Pend.</small>}</label>)}</div>
       </aside>
 
       <main className="workspace-shell">
-        <header className="topbar">
-          <div className="breadcrumbs"><span>HydroBasin</span><ChevronRight size={12} /><strong>{viewLabels[activeView]}</strong></div>
-          <div className="topbar-actions">
-            <span className="engine-status"><i /> {loading ? `Procesando · ${Math.round(processProgress)}%` : demDownloading ? 'Preparando DEM…' : 'Motor listo'}</span>
-            <button className="secondary-button" onClick={() => setLogOpen((value) => !value)}><Terminal size={14} /> Registro</button>
-            <button className="secondary-button" onClick={() => setShowInspector((value) => !value)}><SlidersHorizontal size={14} /> {showInspector ? 'Ocultar panel' : 'Mostrar panel'}</button>
-          </div>
-        </header>
+        <header className="topbar"><div className="breadcrumbs"><span>HydroBasin</span><ChevronRight size={12} /><strong>{viewLabels[activeView]}</strong></div><div className="topbar-actions"><span className="engine-status"><i /> {loading ? `Procesando · ${Math.round(processProgress)}%` : demDownloading ? 'Preparando DEM…' : saveStatus}</span><button className="secondary-button" onClick={() => setLogOpen((value) => !value)}><Terminal size={14} /> Registro</button><button className="secondary-button" onClick={() => setShowInspector((value) => !value)}><SlidersHorizontal size={14} /> {showInspector ? 'Ocultar panel' : 'Mostrar panel'}</button></div></header>
         <div className="workspace-grid">
           <section className="map-workspace">
             <div className="map-toolbar"><div><MapIcon size={14} /><strong>Vista geográfica</strong></div><span>{selectingDemArea ? 'Área DEM · marca dos esquinas' : startMode === 'outlet' && !hasDem ? 'Haz clic sobre el punto de aforo' : demPreview ? `DEM: ${demPreview.filename}` : 'Selecciona una entrada'}</span></div>
@@ -730,14 +795,7 @@ export default function App() {
               <ScaleControl position="bottomleft" imperial={false} />
             </MapContainer>
             <div className="map-readout"><span>{selectingDemArea ? 'Seleccionando área DEM' : startMode === 'outlet' && !hasDem ? 'Punto de aforo' : demPreview ? 'Exutorio · dentro del DEM' : 'Exutorio'}</span><strong>{selectingDemArea ? 'Marca dos esquinas' : `${outlet.lat.toFixed(5)}, ${outlet.lng.toFixed(5)}`}</strong></div>
-            <ProcessLog
-              open={logOpen}
-              running={loading}
-              progress={processProgress}
-              entries={processLogs}
-              onClose={() => setLogOpen(false)}
-              onClear={() => { if (!loading) { setProcessLogs([]); setProcessProgress(0) } }}
-            />
+            <ProcessLog open={logOpen} running={loading} progress={processProgress} entries={processLogs} onClose={() => setLogOpen(false)} onClear={() => { if (!loading) { setProcessLogs([]); setProcessProgress(0) } }} />
           </section>
           {showInspector && <aside className="inspector">{renderInspector()}</aside>}
         </div>
