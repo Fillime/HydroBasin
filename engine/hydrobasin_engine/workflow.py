@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
+import rasterio
+from rasterio.enums import Resampling
 
-from .dem import cargar_dem, corregir_dem, metadatos_dem, umbral_celdas_desde_area
+from .dem import cargar_y_corregir_dem, metadatos_dem, umbral_celdas_desde_area
 from .delineation import ajustar_punto_salida, delimitar_cuenca, transformar_punto
 from .hydrology import acumulacion_flujo, direccion_flujo, orden_strahler
 from .io import guardar_raster, guardar_shapefile_zip, guardar_vector, mascara_a_poligono
@@ -24,6 +26,58 @@ def _geojson_web(gdf) -> dict:
         return {"type": "FeatureCollection", "features": []}
     web = gdf.to_crs("EPSG:4326")
     return json.loads(web.to_json())
+
+
+def _dem_context_preview(path: str | Path, max_dim: int = 1400):
+    """Lee solo una vista reducida para la figura regional, sin cargar de nuevo el DEM completo."""
+    with rasterio.open(path) as src:
+        scale = min(1.0, max_dim / max(src.width, src.height))
+        width = max(1, int(src.width * scale))
+        height = max(1, int(src.height * scale))
+        return src.read(1, out_shape=(height, width), resampling=Resampling.bilinear)
+
+
+def _masked_elevation_stats(values, mask, chunk_rows: int = 512) -> dict:
+    """Calcula estadísticas exactas de la cuenca por franjas, sin crear una copia float64 completa."""
+    array = np.asarray(values)
+    mask_array = np.asarray(mask)
+    if array.shape != mask_array.shape:
+        raise ValueError("El DEM corregido y la máscara de cuenca no tienen las mismas dimensiones.")
+
+    minimum = np.inf
+    maximum = -np.inf
+    total = 0.0
+    count = 0
+
+    for start in range(0, array.shape[0], chunk_rows):
+        stop = min(array.shape[0], start + chunk_rows)
+        block = array[start:stop]
+        block_mask = mask_array[start:stop].astype(bool, copy=False)
+        selected = block[block_mask]
+        if selected.size == 0:
+            continue
+        selected = selected[np.isfinite(selected)]
+        if selected.size == 0:
+            continue
+        minimum = min(minimum, float(selected.min()))
+        maximum = max(maximum, float(selected.max()))
+        total += float(selected.sum(dtype="float64"))
+        count += int(selected.size)
+
+    if count == 0:
+        return {
+            "elevacion_min_m": None,
+            "elevacion_max_m": None,
+            "elevacion_media_m": None,
+            "relieve_cuenca_m": None,
+        }
+
+    return {
+        "elevacion_min_m": minimum,
+        "elevacion_max_m": maximum,
+        "elevacion_media_m": total / count,
+        "relieve_cuenca_m": maximum - minimum,
+    }
 
 
 def run_watershed_analysis(
@@ -50,7 +104,14 @@ def run_watershed_analysis(
     metadata = metadatos_dem(dem_path)
     if not metadata["crs"]:
         raise ValueError("El DEM debe tener un sistema de referencia (CRS) definido.")
-    report("ok", f"DEM válido · {metadata['width']} × {metadata['height']} celdas · {metadata['crs']}", 6)
+    cell_count = int(metadata["width"]) * int(metadata["height"])
+    native_bytes = cell_count * np.dtype(metadata["dtype"]).itemsize
+    report(
+        "ok",
+        f"DEM válido · {metadata['width']} × {metadata['height']} celdas · {metadata['crs']} · raster nativo ≈ {native_bytes / 1024**3:.2f} GiB.",
+        6,
+    )
+    report("info", "Modo de memoria eficiente activo · acondicionamiento por etapas y estadísticas por franjas, sin reducir resolución.", 7)
 
     if minimum_area_km2 is not None:
         drainage_threshold, metric_resolution = umbral_celdas_desde_area(dem_path, minimum_area_km2)
@@ -63,13 +124,9 @@ def run_watershed_analysis(
         drainage_threshold = float(drainage_threshold or 1000)
         metric_resolution = None
 
-    report("info", "Cargando el DEM en el motor hidrológico…", 11)
-    grid, dem = cargar_dem(dem_path)
-    report("ok", "DEM cargado correctamente.", 14)
-
-    report("info", "Corrigiendo pits, depresiones y zonas planas del DEM…", 17)
-    corrected_dem = corregir_dem(grid, dem)
-    report("ok", "Corrección hidrológica del DEM completada.", 27)
+    report("info", "Cargando y corrigiendo el DEM por etapas para limitar el pico de RAM…", 11)
+    grid, corrected_dem = cargar_y_corregir_dem(dem_path)
+    report("ok", "DEM cargado y corrección hidrológica completada sin mantener etapas anteriores en memoria.", 27)
 
     report("info", "Calculando la dirección de flujo mediante el método D8…", 30)
     flow_direction = direccion_flujo(grid, corrected_dem)
@@ -159,14 +216,7 @@ def run_watershed_analysis(
         channel_metrics.get("main_channel_slope"),
     )
 
-    basin_values = np.asarray(corrected_dem, dtype="float64")[np.asarray(watershed_mask).astype(bool)]
-    basin_values = basin_values[np.isfinite(basin_values)]
-    relief_metrics = {
-        "elevacion_min_m": float(basin_values.min()) if basin_values.size else None,
-        "elevacion_max_m": float(basin_values.max()) if basin_values.size else None,
-        "elevacion_media_m": float(basin_values.mean()) if basin_values.size else None,
-        "relieve_cuenca_m": float(basin_values.max() - basin_values.min()) if basin_values.size else None,
-    }
+    relief_metrics = _masked_elevation_stats(corrected_dem, watershed_mask)
 
     summary = {
         "dem_source": dem_source or "GeoTIFF cargado por el usuario",
@@ -188,10 +238,11 @@ def run_watershed_analysis(
     }
 
     report("info", "Generando cartografía, perfil y plano técnico…", 92)
+    dem_context = _dem_context_preview(dem_path)
     figures = generar_figuras(
         output_dir,
         grid,
-        dem,
+        dem_context,
         corrected_dem,
         accumulation,
         watershed_mask,
