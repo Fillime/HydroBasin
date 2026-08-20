@@ -423,10 +423,18 @@ def _compile(tex_path: Path, output_dir: Path) -> tuple[Path | None, str | None]
     compiler = _find_tectonic()
     if not compiler:
         return None, "Tectonic no está disponible en PATH."
+
+    # Tectonic interpreta --outdir respecto al cwd. En Windows esto fallaba cuando
+    # ambos eran rutas relativas (workspace/.../results), porque terminaba buscando
+    # results/workspace/.../results. Resolvemos todo a rutas absolutas antes de llamar.
+    work_dir = tex_path.parent.resolve()
+    resolved_output_dir = output_dir.resolve()
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+
     try:
         completed = subprocess.run(
-            [compiler, tex_path.name, "--outdir", str(output_dir)],
-            cwd=tex_path.parent,
+            [compiler, tex_path.name, "--outdir", str(resolved_output_dir)],
+            cwd=str(work_dir),
             capture_output=True,
             text=True,
             timeout=180,
@@ -434,7 +442,8 @@ def _compile(tex_path: Path, output_dir: Path) -> tuple[Path | None, str | None]
         )
     except Exception as exc:
         return None, str(exc)
-    pdf_path = output_dir / f"{tex_path.stem}.pdf"
+
+    pdf_path = resolved_output_dir / f"{tex_path.stem}.pdf"
     if completed.returncode != 0 or not pdf_path.exists():
         detail = (completed.stderr or completed.stdout or "Error desconocido de compilación").strip()
         return None, detail[-1800:]
@@ -442,6 +451,8 @@ def _compile(tex_path: Path, output_dir: Path) -> tuple[Path | None, str | None]
 
 
 def generar_informes(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None, main_channel=None) -> dict:
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     tex_path = output_dir / "informe_hydrobasin.tex"
     plan_tex_path = output_dir / "plano_hidrografico.tex"
     tex_path.write_text(_report_tex(summary, figures, subbasins), encoding="utf-8")
