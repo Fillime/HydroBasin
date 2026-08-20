@@ -252,6 +252,7 @@ def run_watershed_analysis(
         subbasins=subbasins,
         main_channel=main_channel,
         summary=summary,
+        flow_direction=flow_direction,
     )
     report("ok", "Cartografía, perfil longitudinal y plano base generados.", 96)
 
