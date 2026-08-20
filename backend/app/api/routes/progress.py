@@ -12,10 +12,35 @@ from fastapi.responses import StreamingResponse
 
 from app.api.routes.dem_jobs import resolve_server_dem
 from app.core.config import settings
-from app.services.hydro_service import analyze_dem
+from app.services.hydro_service import analyze_dem, recalculate_basin_from_job
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 _executor = ThreadPoolExecutor(max_workers=2)
+
+
+@router.post("/watershed-quick")
+async def watershed_quick(
+    source_job_id: str = Form(...),
+    x: float = Form(...),
+    y: float = Form(...),
+    point_crs: str = Form("EPSG:4326"),
+):
+    """Recalcula únicamente la cuenca usando D8 y acumulación de un análisis previo."""
+    if not source_job_id or any(ch not in "0123456789abcdefABCDEF" for ch in source_job_id):
+        raise HTTPException(status_code=400, detail="El identificador del análisis base no es válido.")
+
+    results_dir = settings.workspace_dir / source_job_id / "results"
+    if not results_dir.exists():
+        raise HTTPException(status_code=404, detail="No se encontró el análisis base para reutilizar sus resultados.")
+
+    try:
+        result = await __import__("asyncio").get_running_loop().run_in_executor(
+            _executor,
+            lambda: recalculate_basin_from_job(results_dir, x, y, point_crs),
+        )
+        return {"source_job_id": source_job_id, **result}
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/watershed-stream")
@@ -48,7 +73,6 @@ async def watershed_stream(
         except Exception as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         dem_path = input_dir / source_path.name
-        # Keep the downloaded source as the canonical copy, but isolate each analysis job.
         try:
             dem_path.hardlink_to(source_path)
         except OSError:
