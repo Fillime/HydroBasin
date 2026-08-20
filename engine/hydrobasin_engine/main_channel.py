@@ -10,7 +10,6 @@ from shapely.geometry import LineString
 from .hydrology import D8
 
 
-# Offsets are expressed from an upstream neighbour toward the current cell.
 _DIRECTION_BY_OFFSET = {
     (-1, 0): D8[0],
     (-1, 1): D8[1],
@@ -42,7 +41,6 @@ def _upstream_candidate(fdir: np.ndarray, accum: np.ndarray, basin: np.ndarray, 
         nr, nc = r + dr, c + dc
         if nr < 0 or nr >= rows or nc < 0 or nc >= cols or not basin[nr, nc]:
             continue
-        # The neighbour must point back to the current cell.
         target_offset = (-dr, -dc)
         expected = _DIRECTION_BY_OFFSET[target_offset]
         if int(fdir[nr, nc]) == int(expected):
@@ -52,6 +50,36 @@ def _upstream_candidate(fdir: np.ndarray, accum: np.ndarray, basin: np.ndarray, 
     candidates.sort(reverse=True, key=lambda item: item[0])
     _, nr, nc = candidates[0]
     return nr, nc
+
+
+def _find_viable_outlet_cell(fdir: np.ndarray, accum: np.ndarray, basin: np.ndarray, r: int, c: int, max_radius: int = 12):
+    """Busca cerca del exutorio una celda de la cuenca que tenga conexión aguas arriba.
+
+    El snap de Pysheds puede caer sobre el borde de la celda o en una celda terminal de la
+    máscara. Para el cauce principal necesitamos empezar en una celda de la red que tenga
+    al menos un vecino aportante. Se prioriza la mayor acumulación y la menor distancia.
+    """
+    rows, cols = basin.shape
+    if 0 <= r < rows and 0 <= c < cols and basin[r, c] and _upstream_candidate(fdir, accum, basin, r, c) is not None:
+        return r, c
+
+    best = None
+    for radius in range(1, max_radius + 1):
+        r0, r1 = max(0, r - radius), min(rows, r + radius + 1)
+        c0, c1 = max(0, c - radius), min(cols, c + radius + 1)
+        for rr in range(r0, r1):
+            for cc in range(c0, c1):
+                if not basin[rr, cc]:
+                    continue
+                if _upstream_candidate(fdir, accum, basin, rr, cc) is None:
+                    continue
+                distance2 = (rr - r) ** 2 + (cc - c) ** 2
+                score = (float(accum[rr, cc]), -distance2)
+                if best is None or score > best[0]:
+                    best = (score, rr, cc)
+        if best is not None:
+            return best[1], best[2]
+    return None
 
 
 def extraer_cauce_principal(
@@ -67,14 +95,27 @@ def extraer_cauce_principal(
     """Traza el cauce principal desde el exutorio hacia la cabecera de mayor acumulación."""
     fdir = np.asarray(flow_direction)
     accum = np.asarray(accumulation)
-    basin = np.asarray(watershed_mask).astype(bool)
-    dem = np.asarray(corrected_dem, dtype="float64")
+    basin = np.asarray(watershed_mask).astype(bool, copy=False)
+    dem = np.asarray(corrected_dem)
 
     r, c = rowcol(transform, outlet_x, outlet_y)
     r, c = int(r), int(c)
     if r < 0 or c < 0 or r >= basin.shape[0] or c >= basin.shape[1]:
         raise ValueError("El exutorio ajustado quedó fuera del DEM.")
 
+    viable = _find_viable_outlet_cell(fdir, accum, basin, r, c)
+    if viable is None:
+        return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=crs), {
+            "main_channel_length_km": None,
+            "main_channel_slope": None,
+            "main_channel_slope_percent": None,
+            "main_channel_elevation_outlet_m": None,
+            "main_channel_elevation_source_m": None,
+            "profile_distance_km": [],
+            "profile_elevation_m": [],
+        }
+
+    r, c = viable
     cells: list[tuple[int, int]] = [(r, c)]
     visited = {(r, c)}
     max_steps = int(basin.sum())
@@ -106,7 +147,6 @@ def extraer_cauce_principal(
     length_m = float(metric_line.length)
 
     elevations = [float(dem[rr, cc]) for rr, cc in cells]
-    # cells are outlet -> headwater, matching the profile convention used in the reference report.
     source_z = elevations[-1]
     outlet_z = elevations[0]
     slope = max(0.0, (source_z - outlet_z) / length_m) if length_m > 0 else None
