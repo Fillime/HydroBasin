@@ -16,7 +16,7 @@ ENGINE_ROOT = Path(__file__).resolve().parents[3] / "engine"
 if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
 
-from hydrobasin_engine.dem import cargar_dem, corregir_dem  # noqa: E402
+from hydrobasin_engine.dem import cargar_y_corregir_dem  # noqa: E402
 from hydrobasin_engine.delineation import ajustar_punto_salida, delimitar_cuenca, transformar_punto  # noqa: E402
 from hydrobasin_engine.hydrology import acumulacion_flujo, direccion_flujo  # noqa: E402
 
@@ -76,8 +76,7 @@ def preliminary_watershed(path: Path, lng: float, lat: float) -> dict:
         else:
             snap_threshold = 1000.0
 
-    grid, dem = cargar_dem(path)
-    corrected = corregir_dem(grid, dem)
+    grid, corrected = cargar_y_corregir_dem(path)
     fdir = direccion_flujo(grid, corrected)
     accum = acumulacion_flujo(grid, fdir)
     x_dem, y_dem = transformar_punto(lng, lat, "EPSG:4326", crs)
@@ -139,7 +138,6 @@ async def obtain_adaptive_dem(
     coarse_path: Path | None = None
     coarse_check: dict | None = None
 
-    # Fase 1: localización barata con COP90.
     for round_index in range(1, max_rounds + 1):
         if progress:
             progress(round_index, max_rounds, bounds, "coarse_downloading")
