@@ -66,6 +66,7 @@ def _mask_bounds_wgs84(mask, path: Path) -> dict[str, float] | None:
 
 
 def preliminary_watershed(path: Path, lng: float, lat: float) -> dict:
+    """Delimitación de exploración usada únicamente con el DEM coarse de 90 m."""
     with rasterio.open(path) as src:
         crs = src.crs.to_string() if src.crs else None
         if not crs:
@@ -95,7 +96,9 @@ def expand_bounds(bounds: dict[str, float], touches: dict[str, bool], factor: fl
     south, north, west, east = bounds["south"], bounds["north"], bounds["west"], bounds["east"]
     height = north - south
     width = east - west
-    minor = 0.12
+    # La expansión principal ocurre solamente hacia el borde que toca la cuenca.
+    # Un margen pequeño en los demás lados evita quedar exactamente al ras sin inflar el DEM.
+    minor = 0.03
     return {
         "south": max(-89.9, south - height * (factor if touches.get("south") else minor)),
         "north": min(89.9, north + height * (factor if touches.get("north") else minor)),
@@ -129,9 +132,13 @@ async def obtain_adaptive_dem(
     progress=None,
     initial_radius_km: float = 25.0,
     max_rounds: int = 5,
-    final_verify_rounds: int = 2,
 ) -> tuple[Path, dict]:
-    """Localiza la cuenca a 90 m y descarga/verifica el DEM final a la resolución elegida."""
+    """Localiza la cuenca a 90 m y descarga una sola vez el DEM final.
+
+    La resolución final NO se remuestrea ni se reduce. La hidrología completa de alta
+    resolución se ejecuta únicamente durante el análisis definitivo; hacerla aquí otra vez
+    duplicaba tiempo y pico de RAM sin aportar un resultado final adicional.
+    """
     destination_dir.mkdir(parents=True, exist_ok=True)
     bounds = initial_bounds(lat, lng, initial_radius_km)
     history: list[dict] = []
@@ -144,7 +151,10 @@ async def obtain_adaptive_dem(
         candidate = destination_dir / f"coarse_round_{round_index}_{COARSE_SOURCE.lower()}.tif"
         await download_dem(
             source=COARSE_SOURCE,
-            south=bounds["south"], north=bounds["north"], west=bounds["west"], east=bounds["east"],
+            south=bounds["south"],
+            north=bounds["north"],
+            west=bounds["west"],
+            east=bounds["east"],
             destination=candidate,
         )
         if coarse_path and coarse_path.exists():
@@ -154,41 +164,38 @@ async def obtain_adaptive_dem(
         if progress:
             progress(round_index, max_rounds, bounds, "coarse_checking")
         coarse_check = preliminary_watershed(candidate, lng, lat)
-        history.append({"phase": "coarse", "round": round_index, "source": COARSE_SOURCE, "bounds": dict(bounds), **coarse_check})
+        history.append({
+            "phase": "coarse",
+            "round": round_index,
+            "source": COARSE_SOURCE,
+            "bounds": dict(bounds),
+            **coarse_check,
+        })
         if coarse_check["contained"] and coarse_check.get("basin_bounds"):
             break
         bounds = expand_bounds(bounds, coarse_check["touches"])
 
     if not coarse_check or not coarse_check.get("basin_bounds"):
         raise RuntimeError("No fue posible estimar la extensión de la cuenca con el DEM preliminar de 90 m.")
+    if not coarse_check.get("contained"):
+        raise RuntimeError(
+            f"La cuenca preliminar siguió tocando el borde después de {max_rounds} iteraciones a 90 m. "
+            "No se descargó un DEM final enorme para evitar consumir memoria innecesariamente."
+        )
 
     final_bounds = buffered_basin_bounds(coarse_check["basin_bounds"])
     if progress:
-        progress(1, final_verify_rounds, final_bounds, "fine_downloading")
+        progress(1, 1, final_bounds, "final_downloading")
 
-    final_candidate: Path | None = None
-    fine_check: dict | None = None
-    for verify_round in range(1, final_verify_rounds + 1):
-        candidate = destination_dir / f"fine_round_{verify_round}_{source.lower()}.tif"
-        await download_dem(
-            source=source,
-            south=final_bounds["south"], north=final_bounds["north"], west=final_bounds["west"], east=final_bounds["east"],
-            destination=candidate,
-        )
-        if final_candidate and final_candidate.exists():
-            final_candidate.unlink(missing_ok=True)
-        final_candidate = candidate
-
-        if progress:
-            progress(verify_round, final_verify_rounds, final_bounds, "fine_checking")
-        fine_check = preliminary_watershed(candidate, lng, lat)
-        history.append({"phase": "fine", "round": verify_round, "source": source, "bounds": dict(final_bounds), **fine_check})
-        if fine_check["contained"]:
-            break
-        final_bounds = expand_bounds(final_bounds, fine_check["touches"], factor=0.45)
-
-    if final_candidate is None:
-        raise RuntimeError("No fue posible descargar el DEM final.")
+    final_candidate = destination_dir / f"fine_{source.lower()}.tif"
+    await download_dem(
+        source=source,
+        south=final_bounds["south"],
+        north=final_bounds["north"],
+        west=final_bounds["west"],
+        east=final_bounds["east"],
+        destination=final_candidate,
+    )
 
     final_path = destination_dir / f"hydrobasin_{source.lower()}_adaptive.tif"
     if final_path.exists():
@@ -197,13 +204,25 @@ async def obtain_adaptive_dem(
     if coarse_path and coarse_path.exists():
         coarse_path.unlink(missing_ok=True)
 
+    history.append({
+        "phase": "final_download",
+        "round": 1,
+        "source": source,
+        "bounds": dict(final_bounds),
+        "contained_by_coarse_envelope": True,
+    })
+
+    if progress:
+        progress(1, 1, final_bounds, "final_ready")
+
     return final_path, {
         "bounds": final_bounds,
         "rounds": len([item for item in history if item["phase"] == "coarse"]),
-        "fine_rounds": len([item for item in history if item["phase"] == "fine"]),
+        "fine_rounds": 1,
         "history": history,
-        "contained": bool(fine_check and fine_check.get("contained")),
+        "contained": True,
         "coarse_source": COARSE_SOURCE,
         "final_source": source,
         "coarse_basin_bounds": coarse_check.get("basin_bounds"),
+        "verification_strategy": "coarse_envelope_plus_buffer",
     }
