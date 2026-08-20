@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 
 import rasterio
@@ -23,6 +24,35 @@ def corregir_dem(grid: Grid, dem):
     flooded = grid.fill_depressions(pit_filled)
     inflated = grid.resolve_flats(flooded)
     return inflated
+
+
+def cargar_y_corregir_dem(ruta: str | Path):
+    """Carga y acondiciona un DEM liberando cada etapa tan pronto deja de ser necesaria.
+
+    Esta ruta evita que el DEM original, el relleno de pits y el relleno de depresiones
+    permanezcan vivos simultáneamente durante todo el acondicionamiento. No cambia la
+    resolución ni remuestrea el raster.
+    """
+    ruta = Path(ruta)
+    if not ruta.exists():
+        raise FileNotFoundError(f"No se encontró el DEM: {ruta}")
+
+    grid = Grid.from_raster(str(ruta))
+    dem = grid.read_raster(str(ruta))
+
+    pit_filled = grid.fill_pits(dem)
+    del dem
+    gc.collect()
+
+    flooded = grid.fill_depressions(pit_filled)
+    del pit_filled
+    gc.collect()
+
+    corrected = grid.resolve_flats(flooded)
+    del flooded
+    gc.collect()
+
+    return grid, corrected
 
 
 def metadatos_dem(ruta: str | Path) -> dict:
