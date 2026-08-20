@@ -1,7 +1,7 @@
 {
   "name": "hydrobasin-web",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,11 +12,13 @@
     "@vitejs/plugin-react": "latest",
     "leaflet": "latest",
     "lucide-react": "latest",
+    "mapbox-gl": "^3.26.0",
     "react": "latest",
     "react-dom": "latest",
     "react-leaflet": "latest"
   },
   "devDependencies": {
+    "@types/geojson": "latest",
     "@types/leaflet": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
