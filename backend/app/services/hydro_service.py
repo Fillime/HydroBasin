@@ -11,6 +11,7 @@ if str(ENGINE_ROOT) not in sys.path:
 # Mantener el generador de figuras del motor y sustituir solamente la plantilla
 # documental antes de que workflow enlace generar_informes.
 import hydrobasin_engine.report as report_module  # noqa: E402
+from hydrobasin_engine.fast_delineation import recalculate_watershed_from_cache  # noqa: E402
 from hydrobasin_engine.report_professional import generar_informes as generar_informes_professional  # noqa: E402
 
 report_module.generar_informes = generar_informes_professional
@@ -39,4 +40,13 @@ def analyze_dem(
         minimum_area_km2=minimum_area_km2,
         dem_source=dem_source,
         progress=progress,
+    )
+
+
+def recalculate_basin_from_job(results_dir: Path, x: float, y: float, point_crs: str = "EPSG:4326") -> dict:
+    return recalculate_watershed_from_cache(
+        results_dir=results_dir,
+        x=x,
+        y=y,
+        point_crs=point_crs,
     )
