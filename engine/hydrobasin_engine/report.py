@@ -50,7 +50,7 @@ def _plot_profile(figures_dir: Path, summary: dict) -> str | None:
     elevations = summary.get("profile_elevation_m") or []
     if len(distances) < 2 or len(distances) != len(elevations):
         return None
-    fig, ax = plt.subplots(figsize=(9, 3.4))
+    fig, ax = plt.subplots(figsize=(9, 3.5))
     ax.plot(distances, elevations, linewidth=1.8)
     ax.fill_between(distances, elevations, min(elevations), alpha=0.18)
     ax.set_title("Perfil longitudinal del cauce principal")
@@ -79,7 +79,7 @@ def _plot_plan(figures_dir: Path, watershed, drainage, subbasins, main_channel, 
     if drains is not None:
         drains.plot(ax=ax, color="#2775c9", linewidth=0.65, alpha=0.92)
     if channel is not None:
-        channel.plot(ax=ax, color="#d62728", linewidth=2.1)
+        channel.plot(ax=ax, color="#d62728", linewidth=2.2)
 
     west, south, east, north = basin.total_bounds
     dx, dy = east - west, north - south
@@ -91,7 +91,7 @@ def _plot_plan(figures_dir: Path, watershed, drainage, subbasins, main_channel, 
     ax.tick_params(labelsize=8)
     ax.set_xlabel("Coordenada Este")
     ax.set_ylabel("Coordenada Norte")
-    ax.set_title("Plano hidrográfico - cuenca, subcuencas y red de drenaje", fontsize=14, fontweight="bold")
+    ax.set_title("Plano hidrográfico - cuenca, subcuencas, drenajes y cauce principal", fontsize=14, fontweight="bold")
 
     ax.annotate("N", xy=(0.075, 0.92), xycoords="axes fraction", ha="center", va="center", fontsize=15, fontweight="bold")
     ax.annotate("", xy=(0.075, 0.89), xytext=(0.075, 0.78), xycoords="axes fraction", arrowprops=dict(arrowstyle="-|>", lw=2.0, color="#111111"))
@@ -135,6 +135,7 @@ def generar_figuras(
     subbasins=None,
     main_channel=None,
     summary: dict | None = None,
+    flow_direction=None,
 ) -> dict[str, str]:
     summary = summary or {}
     figures_dir = output_dir / "figuras"
@@ -170,8 +171,8 @@ def generar_figuras(
     ax.set_ylabel("Coordenada Y")
     _save(fig, figures_dir / "02_hillshade_cuenca.png")
 
-    acc = _sample(accumulation).astype("float32", copy=False)
     basin_sample = _sample(watershed_mask).astype(bool)
+    acc = _sample(accumulation).astype("float32", copy=False)
     acc_masked = np.where((acc > 0) & basin_sample, acc, np.nan)
     positive = acc_masked[np.isfinite(acc_masked)]
     vmax = float(positive.max()) if positive.size else 1.0
@@ -191,7 +192,7 @@ def generar_figuras(
     if drainage is not None and not drainage.empty:
         drainage.plot(ax=ax, linewidth=0.7)
     if main_channel is not None and not main_channel.empty:
-        main_channel.plot(ax=ax, color="#d62728", linewidth=1.8)
+        main_channel.plot(ax=ax, color="#d62728", linewidth=1.9)
     _focus(ax, focus)
     ax.set_title("Cuenca delimitada, red de drenaje y cauce principal")
     ax.set_xlabel("Coordenada X")
@@ -226,13 +227,27 @@ def generar_figuras(
         if drainage is not None and not drainage.empty:
             drainage.plot(ax=ax, linewidth=0.5)
         if main_channel is not None and not main_channel.empty:
-            main_channel.plot(ax=ax, color="#d62728", linewidth=1.6)
+            main_channel.plot(ax=ax, color="#d62728", linewidth=1.7)
         _focus(ax, focus)
         ax.set_title("Subcuencas hidrológicas dentro de la cuenca principal")
         ax.set_xlabel("Coordenada X")
         ax.set_ylabel("Coordenada Y")
         _save(fig, figures_dir / "06_subcuencas.png")
         figures["subbasins"] = "figuras/06_subcuencas.png"
+
+    if flow_direction is not None:
+        fdir = _sample(flow_direction).astype("float32", copy=False)
+        fdir_masked = np.where(basin_sample & (fdir > 0), fdir, np.nan)
+        fig, ax = plt.subplots(figsize=(9, 6.2))
+        im = ax.imshow(fdir_masked, extent=extent, cmap="twilight", interpolation="nearest")
+        watershed.boundary.plot(ax=ax, linewidth=1.4)
+        _focus(ax, focus)
+        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Código de dirección D8")
+        ax.set_title("Dirección de flujo D8 dentro de la cuenca")
+        ax.set_xlabel("Coordenada X")
+        ax.set_ylabel("Coordenada Y")
+        _save(fig, figures_dir / "09_direccion_flujo.png")
+        figures["flow_direction"] = "figuras/09_direccion_flujo.png"
 
     profile = _plot_profile(figures_dir, summary)
     if profile:
@@ -242,7 +257,12 @@ def generar_figuras(
 
 
 def _n(value, digits=2):
-    return "N/D" if value is None else f"{value:.{digits}f}"
+    if value is None:
+        return "N/D"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _latex_escape(value) -> str:
@@ -251,39 +271,71 @@ def _latex_escape(value) -> str:
     return "".join(replacements.get(ch, ch) for ch in text)
 
 
+def _coord_pair(value) -> str:
+    if not isinstance(value, dict):
+        return "N/D"
+    x, y = value.get("x"), value.get("y")
+    if x is None or y is None:
+        return "N/D"
+    return f"{float(y):.6f}, {float(x):.6f}"
+
+
+def _tc_minutes(summary: dict, key: str):
+    value = summary.get(key)
+    return None if value is None else float(value) * 60.0
+
+
 def _subbasin_table_rows(subbasins) -> str:
     if subbasins is None or subbasins.empty or "area_km2" not in subbasins.columns:
         return ""
-    top = subbasins.sort_values("area_km2", ascending=False).head(12)
+    top = subbasins.sort_values("area_km2", ascending=False).head(20)
     return "\n".join(f"{int(row['subbasin_id'])} & {_n(float(row['area_km2']), 2)} \\\\" for _, row in top.iterrows())
+
+
+def _figure_block(figures: dict[str, str], key: str, caption: str, width: str = "0.94\\textwidth") -> str:
+    path = figures.get(key)
+    if not path:
+        return ""
+    return rf"""
+\begin{{figure}}[H]
+\centering
+\includegraphics[width={width}]{{{path}}}
+\caption{{{caption}}}
+\end{{figure}}
+"""
 
 
 def _interpretation(summary: dict) -> str:
     parts = []
     ff = summary.get("factor_forma")
     if ff is not None:
-        parts.append(f"El factor de forma es {_n(ff, 3)} y la cuenca se clasifica como {_latex_escape(summary.get('clasificacion_factor_forma') or 'sin clasificación')}. Este índice describe la relación entre el área y la longitud axial, por lo que ayuda a interpretar la tendencia geométrica de la respuesta hidrológica.")
+        parts.append(f"El factor de forma es {_n(ff, 3)} y la cuenca se clasifica como {_latex_escape(summary.get('clasificacion_factor_forma') or 'sin clasificación')}. Este índice expresa la relación entre el área de la cuenca y su longitud característica.")
     kc = summary.get("coeficiente_compacidad")
     if kc is not None:
-        parts.append(f"El índice de compacidad o Gravelius es {_n(kc, 3)}, con clasificación {_latex_escape(summary.get('clasificacion_compacidad') or 'sin clasificación')}. Valores más alejados de 1 indican formas progresivamente menos circulares.")
+        parts.append(f"El índice de compacidad de Gravelius es {_n(kc, 3)}, con clasificación {_latex_escape(summary.get('clasificacion_compacidad') or 'sin clasificación')}. Valores más alejados de 1 representan geometrías progresivamente menos circulares.")
     dd = summary.get("densidad_drenaje_km_km2")
     if dd is not None:
-        parts.append(f"La densidad de drenaje es {_n(dd, 3)} km/km$^2$ y se clasifica como {_latex_escape(summary.get('clasificacion_densidad_drenaje') or 'sin clasificación')}. Este parámetro expresa la longitud de cauces por unidad de superficie y depende del umbral usado para extraer la red.")
-    slope = summary.get("main_channel_slope_percent")
-    if slope is not None:
-        parts.append(f"La pendiente media del cauce principal es {_n(slope, 2)}\%, parámetro empleado junto con su longitud para estimar tiempos de concentración por métodos empíricos.")
-    return "\n\n".join(parts) or "Los indicadores deben interpretarse junto con la resolución y calidad del DEM, el umbral de drenaje y la ubicación del exutorio."
+        parts.append(f"La densidad de drenaje es {_n(dd, 3)} km/km$^2$ y se clasifica como {_latex_escape(summary.get('clasificacion_densidad_drenaje') or 'sin clasificación')}. Este valor depende directamente del umbral de área mínima empleado para extraer la red.")
+    if summary.get("main_channel_length_km") is not None:
+        parts.append(f"El cauce principal presenta una longitud aproximada de {_n(summary.get('main_channel_length_km'))} km y una pendiente media de {_n(summary.get('main_channel_slope_percent'), 2)}\%. Estos parámetros se utilizan para caracterizar la trayectoria principal de evacuación del flujo y estimar tiempos de concentración.")
+    return "\n\n".join(parts) or "Los indicadores deben interpretarse conjuntamente con la calidad del DEM, el umbral de drenaje y la posición del exutorio."
 
 
 def _report_tex(summary: dict, figures: dict[str, str], subbasins) -> str:
-    title = _latex_escape(summary.get("dem_source") or "HydroBasin")
+    source = _latex_escape(summary.get("dem_source") or "N/D")
+    original_coord = _coord_pair(summary.get("outlet_original"))
+    snapped_coord = _coord_pair(summary.get("outlet_snapped"))
+    original_crs = _latex_escape((summary.get("outlet_original") or {}).get("crs", "N/D"))
+    snapped_crs = _latex_escape((summary.get("outlet_snapped") or {}).get("crs", "N/D"))
+    resolution = summary.get("metric_resolution_m")
+    resolution_text = "N/D" if not resolution else f"{float(resolution[0]):.1f} x {float(resolution[1]):.1f} m"
     rows = _subbasin_table_rows(subbasins)
-    sub_section = ""
+    sub_table = ""
     if rows:
-        sub_section = rf"""
-\subsection{{Subcuencas}}
-Se identificaron {summary.get('subbasin_count', 0)} subcuencas hidrológicas mediante puntos de control derivados de la estructura de flujo D8. La tabla resume las unidades de mayor área.
-\begin{{center}}
+        sub_table = rf"""
+\begin{{table}}[H]
+\centering
+\caption{{Subcuencas de mayor área.}}
 \begin{{tabular}}{{rr}}
 \toprule
 ID & Área (km$^2$) \\
@@ -291,16 +343,44 @@ ID & Área (km$^2$) \\
 {rows}
 \bottomrule
 \end{{tabular}}
-\end{{center}}
+\end{{table}}
 """
-    profile_figure = ""
-    if figures.get("profile"):
-        profile_figure = rf"""
-\begin{{figure}}[H]
-\centering\includegraphics[width=0.95\textwidth]{{{figures['profile']}}}
-\caption{{Perfil longitudinal del cauce principal.}}
-\end{{figure}}
+
+    main_channel_available = summary.get("main_channel_length_km") is not None
+    if main_channel_available:
+        main_channel_text = rf"""
+\begin{{table}}[H]
+\centering
+\begin{{tabular}}{{lr}}
+\toprule
+Parámetro & Resultado \\
+\midrule
+Longitud del cauce principal & {_n(summary.get('main_channel_length_km'))} km \\
+Elevación en cabecera & {_n(summary.get('main_channel_elevation_source_m'))} m \\
+Elevación en exutorio & {_n(summary.get('main_channel_elevation_outlet_m'))} m \\
+Desnivel & {_n((summary.get('main_channel_elevation_source_m') or 0) - (summary.get('main_channel_elevation_outlet_m') or 0))} m \\
+Pendiente media & {_n(summary.get('main_channel_slope_percent'), 3)}\% \\
+Tiempo de concentración Kirpich & {_n(_tc_minutes(summary, 'tc_kirpich_h'))} min \\
+Tiempo de concentración Témez & {_n(_tc_minutes(summary, 'tc_temez_h'))} min \\
+Tiempo de concentración promedio & {_n(_tc_minutes(summary, 'tc_promedio_h'))} min \\
+\bottomrule
+\end{{tabular}}
+\end{{table}}
 """
+    else:
+        main_channel_text = "No fue posible establecer un cauce principal continuo con la topología D8 obtenida. El análisis conserva la red de drenaje completa y este resultado debe revisarse antes de utilizar tiempos de concentración."
+
+    cartography = "".join([
+        _figure_block(figures, "dem", "Contexto regional del modelo digital de elevación y cuenca delimitada."),
+        _figure_block(figures, "hillshade", "Relieve sombreado dentro de la cuenca."),
+        _figure_block(figures, "flow_direction", "Dirección de flujo calculada mediante el esquema D8."),
+        _figure_block(figures, "accumulation", "Acumulación de flujo y concentración del aporte aguas arriba."),
+        _figure_block(figures, "watershed", "Cuenca principal, red de drenaje y cauce principal."),
+        _figure_block(figures, "strahler", "Jerarquía de corrientes según el orden de Strahler."),
+        _figure_block(figures, "subbasins", "Subcuencas hidrológicas internas y red de drenaje."),
+        _figure_block(figures, "profile", "Perfil longitudinal del cauce principal."),
+    ])
+
     return rf"""\documentclass[11pt,a4paper]{{article}}
 \usepackage[utf8]{{inputenc}}
 \usepackage[T1]{{fontenc}}
@@ -310,21 +390,81 @@ ID & Área (km$^2$) \\
 \usepackage{{booktabs}}
 \usepackage{{float}}
 \usepackage{{xcolor}}
+\usepackage{{array}}
+\usepackage{{fancyhdr}}
+\usepackage{{microtype}}
 \geometry{{margin=2.2cm}}
-\title{{Informe técnico de delimitación y análisis de cuenca}}
-\author{{HydroBasin}}
-\date{{{datetime.now().strftime('%Y-%m-%d %H:%M')}}}
+\definecolor{{hb}}{{HTML}}{{1F6F78}}
+\definecolor{{hbsoft}}{{HTML}}{{EEF6F6}}
+\pagestyle{{fancy}}
+\fancyhf{{}}
+\lhead{{HydroBasin}}
+\rhead{{Informe de análisis hidrográfico}}
+\cfoot{{\thepage}}
 \begin{{document}}
-\maketitle
-\section{{Objeto}}
-Este documento resume el procesamiento automático ejecutado por HydroBasin a partir de un modelo digital de elevación y un exutorio. La fuente reportada para el DEM es \textbf{{{title}}}.
 
-\section{{Metodología}}
-El flujo aplicado comprende corrección hidrológica del DEM, dirección de flujo D8, acumulación, ajuste del exutorio a una celda de acumulación significativa, delimitación de cuenca, extracción de drenajes, orden de Strahler, subcuencas, cauce principal y parámetros morfométricos. El área mínima seleccionada para la red fue de {_n(summary.get('minimum_area_km2'), 3)} km$^2$, equivalente a {_n(summary.get('drainage_threshold'), 0)} celdas.
+\begin{{titlepage}}
+\vspace*{{2.0cm}}
+{{\color{{hb}}\Large\bfseries HYDROBASIN / WATERSHED STUDIO}}\\[0.6cm]
+{{\Huge\bfseries Informe de delimitación y análisis de cuenca hidrográfica}}\\[0.5cm]
+{{\large Análisis hidrológico derivado de Modelo Digital de Elevación}}\\[1.5cm]
+\renewcommand{{\arraystretch}}{{1.35}}
+\begin{{tabular}}{{p{{5.2cm}}p{{9.0cm}}}}
+\toprule
+\textbf{{Dato}} & \textbf{{Información}} \\
+\midrule
+Fuente del DEM & {source} \\
+Coordenadas del exutorio original & {original_coord} ({original_crs}) \\
+Coordenadas del exutorio ajustado & {snapped_coord} ({snapped_crs}) \\
+CRS del DEM & {_latex_escape(summary.get('crs_dem') or 'N/D')} \\
+CRS de cálculo & {_latex_escape(summary.get('crs_calculo') or summary.get('crs_dem') or 'N/D')} \\
+Resolución métrica aproximada & {resolution_text} \\
+Área delimitada & {_n(summary.get('area_km2'))} km$^2$ \\
+Fecha de procesamiento & {datetime.now().strftime('%d/%m/%Y %H:%M')} \\
+\bottomrule
+\end{{tabular}}
+\vfill
+\noindent\colorbox{{hbsoft}}{{\parbox{{0.94\textwidth}}{{Documento técnico generado automáticamente. Los resultados dependen de la resolución y calidad del DEM, del acondicionamiento hidrológico y de los parámetros seleccionados para la extracción de drenajes.}}}}
+\end{{titlepage}}
 
-\section{{Resultados principales}}
-\begin{{center}}
-\begin{{tabular}}{{lr}}
+\tableofcontents
+\newpage
+
+\section{{Objeto y alcance}}
+El presente informe documenta la delimitación de la cuenca hidrográfica aportante al exutorio seleccionado y la caracterización de su respuesta geométrica e hidrológica a partir del DEM. Se incluyen el acondicionamiento del terreno, dirección y acumulación de flujo, red de drenaje, orden de Strahler, subcuencas, cauce principal, perfil longitudinal y parámetros morfométricos.
+
+\section{{Datos de entrada y referencia espacial}}
+\begin{{tabular}}{{p{{6.2cm}}p{{8.2cm}}}}
+\toprule
+Fuente DEM & {source} \\
+Dimensiones del DEM & {summary.get('dem_width', 'N/D')} x {summary.get('dem_height', 'N/D')} celdas \\
+CRS DEM & {_latex_escape(summary.get('crs_dem') or 'N/D')} \\
+Resolución & {resolution_text} \\
+Exutorio original & {original_coord} \\
+Exutorio ajustado & {snapped_coord} \\
+Área mínima de aporte & {_n(summary.get('minimum_area_km2'), 3)} km$^2$ \\
+Umbral equivalente & {_n(summary.get('drainage_threshold'), 0)} celdas \\
+\bottomrule
+\end{{tabular}}
+
+\section{{Metodología de procesamiento}}
+\subsection{{Acondicionamiento hidrológico del DEM}}
+Se corrigen pits, depresiones y zonas planas para obtener una superficie hidrológicamente conectada sin modificar la resolución espacial del raster.
+\subsection{{Dirección y acumulación de flujo}}
+La dirección de flujo se determina mediante el esquema D8 y la acumulación representa el número de celdas aportantes aguas arriba de cada posición.
+\subsection{{Exutorio y delimitación de cuenca}}
+El punto suministrado se ajusta a una celda de acumulación significativa. A partir del exutorio ajustado se delimita la cuenca principal.
+\subsection{{Red de drenaje y orden de Strahler}}
+La red se extrae con el área mínima de aporte seleccionada y se jerarquiza mediante el orden de Strahler.
+\subsection{{Subcuencas}}
+Las subcuencas se obtienen a partir de la estructura de flujo D8 y puntos de control asociados a confluencias y salidas internas de la red.
+\subsection{{Cauce principal}}
+El cauce principal se traza desde el exutorio hacia la cabecera siguiendo la conectividad de flujo. A partir de su longitud y desnivel se obtiene la pendiente media y se estiman tiempos de concentración empíricos.
+
+\section{{Resultados hidrológicos y morfométricos}}
+\begin{{table}}[H]
+\centering
+\begin{{tabular}}{{p{{8.0cm}}r}}
 \toprule
 Parámetro & Resultado \\
 \midrule
@@ -333,36 +473,38 @@ Perímetro & {_n(summary.get('perimetro_km'))} km \\
 Longitud axial & {_n(summary.get('longitud_axial_km'))} km \\
 Factor de forma & {_n(summary.get('factor_forma'), 3)} \\
 Compacidad de Gravelius & {_n(summary.get('coeficiente_compacidad'), 3)} \\
-Circularidad & {_n(summary.get('relacion_circularidad'), 3)} \\
+Relación de circularidad & {_n(summary.get('relacion_circularidad'), 3)} \\
 Densidad de drenaje & {_n(summary.get('densidad_drenaje_km_km2'), 3)} km/km$^2$ \\
-Orden Strahler máximo & {summary.get('strahler_max', 'N/D')} \\
-Longitud cauce principal & {_n(summary.get('main_channel_length_km'))} km \\
-Pendiente cauce principal & {_n(summary.get('main_channel_slope_percent'))}\% \\
-Kirpich & {_n(summary.get('tc_kirpich_min'))} min \\
-Témez & {_n(summary.get('tc_temez_min'))} min \\
+Orden máximo de Strahler & {summary.get('strahler_max', 'N/D')} \\
+Número de subcuencas & {summary.get('subbasin_count', 'N/D')} \\
 Elevación mínima & {_n(summary.get('elevacion_min_m'))} m \\
 Elevación máxima & {_n(summary.get('elevacion_max_m'))} m \\
-Relieve & {_n(summary.get('relieve_cuenca_m'))} m \\
+Elevación media & {_n(summary.get('elevacion_media_m'))} m \\
+Relieve total & {_n(summary.get('relieve_cuenca_m'))} m \\
 \bottomrule
 \end{{tabular}}
-\end{{center}}
+\end{{table}}
 
-{sub_section}
-\section{{Cartografía}}
-\begin{{figure}}[H]
-\centering\includegraphics[width=0.95\textwidth]{{{figures['watershed']}}}
-\caption{{Cuenca delimitada, red de drenaje y cauce principal.}}
-\end{{figure}}
-\begin{{figure}}[H]
-\centering\includegraphics[width=0.95\textwidth]{{{figures['strahler']}}}
-\caption{{Orden de corrientes de Strahler dentro de la cuenca.}}
-\end{{figure}}
-{profile_figure}
+\section{{Cauce principal y tiempo de concentración}}
+{main_channel_text}
+{_figure_block(figures, 'profile', 'Perfil longitudinal del cauce principal.')}
+
+\section{{Subcuencas}}
+Se identificaron \textbf{{{summary.get('subbasin_count', 0)}}} subcuencas hidrológicas dentro de la cuenca principal. Estas unidades permiten interpretar la distribución espacial de aportes y la organización interna del drenaje.
+{sub_table}
+{_figure_block(figures, 'subbasins', 'Subcuencas hidrológicas internas, red de drenaje y cauce principal.')}
+
+\section{{Cartografía técnica}}
+{cartography}
+
 \section{{Interpretación}}
 {_interpretation(summary)}
 
+\section{{Criterio de extracción de drenajes}}
+El área mínima de aporte controla la densidad de la red. Valores pequeños incorporan cauces potenciales de menor jerarquía; valores mayores conservan principalmente los drenajes estructurales. Su selección debe responder a la resolución del DEM, escala de presentación y objetivo del estudio.
+
 \section{{Limitaciones}}
-HydroBasin no infiere precipitación, temperatura, caudal observado ni parámetros climáticos a partir del DEM. Los resultados dependen de la resolución y calidad del raster, del acondicionamiento hidrológico, de la ubicación del exutorio y del umbral de extracción de drenajes. Los tiempos de concentración son estimaciones empíricas y deben contrastarse con información del proyecto cuando se utilicen en diseño.
+HydroBasin no infiere precipitación, temperatura, caudal observado ni parámetros climáticos a partir del DEM. Los resultados dependen de la resolución y calidad del raster, del acondicionamiento hidrológico, de la ubicación del exutorio y del umbral de drenaje. Los tiempos de concentración son estimaciones empíricas y deben contrastarse con información del proyecto cuando se utilicen en diseño.
 \end{{document}}
 """
 
@@ -380,7 +522,7 @@ def _plan_tex(summary: dict, figures: dict[str, str]) -> str:
 \begin{{document}}
 \begin{{center}}
 {{\Large\bfseries PLANO HIDROGRÁFICO DE CUENCA}}\\[1mm]
-{{\small HydroBasin · CRS de cálculo: {_latex_escape(summary.get('crs_calculo') or 'N/D')}}}
+{{\small HydroBasin · CRS de cálculo: {_latex_escape(summary.get('crs_calculo') or summary.get('crs_dem') or 'N/D')}}}
 \end{{center}}
 \noindent
 \begin{{minipage}}[t]{{0.78\textwidth}}
@@ -400,14 +542,16 @@ Strahler máx. & {summary.get('strahler_max','N/D')}\\
 Subcuencas & {summary.get('subbasin_count','N/D')}\\
 Cauce princ. & {_n(summary.get('main_channel_length_km'))} km\\
 Pendiente & {_n(summary.get('main_channel_slope_percent'))}\%\\
-Tc Kirpich & {_n(summary.get('tc_kirpich_min'))} min\\
-Tc Témez & {_n(summary.get('tc_temez_min'))} min\\
+Tc Kirpich & {_n(_tc_minutes(summary, 'tc_kirpich_h'))} min\\
+Tc Témez & {_n(_tc_minutes(summary, 'tc_temez_h'))} min\\
 \bottomrule
 \end{{tabular}}\\[4mm]
 \textbf{{Fuente DEM}}\\
 {_latex_escape(summary.get('dem_source') or 'N/D')}\\[3mm]
+\textbf{{Exutorio original}}\\
+{_coord_pair(summary.get('outlet_original'))}\\[2mm]
 \textbf{{Exutorio ajustado}}\\
-{_latex_escape(summary.get('outlet_snapped') or 'N/D')}\\[3mm]
+{_coord_pair(summary.get('outlet_snapped'))}\\[3mm]
 \textbf{{Nota}}\\
 Resultados derivados del DEM y del umbral de drenaje seleccionado. Verificar contra información de campo y criterios del proyecto.
 \end{{minipage}}
@@ -423,14 +567,9 @@ def _compile(tex_path: Path, output_dir: Path) -> tuple[Path | None, str | None]
     compiler = _find_tectonic()
     if not compiler:
         return None, "Tectonic no está disponible en PATH."
-
-    # Tectonic interpreta --outdir respecto al cwd. En Windows esto fallaba cuando
-    # ambos eran rutas relativas (workspace/.../results), porque terminaba buscando
-    # results/workspace/.../results. Resolvemos todo a rutas absolutas antes de llamar.
     work_dir = tex_path.parent.resolve()
     resolved_output_dir = output_dir.resolve()
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
-
     try:
         completed = subprocess.run(
             [compiler, tex_path.name, "--outdir", str(resolved_output_dir)],
@@ -442,7 +581,6 @@ def _compile(tex_path: Path, output_dir: Path) -> tuple[Path | None, str | None]
         )
     except Exception as exc:
         return None, str(exc)
-
     pdf_path = resolved_output_dir / f"{tex_path.stem}.pdf"
     if completed.returncode != 0 or not pdf_path.exists():
         detail = (completed.stderr or completed.stdout or "Error desconocido de compilación").strip()
@@ -457,7 +595,6 @@ def generar_informes(output_dir: Path, summary: dict, figures: dict[str, str], s
     plan_tex_path = output_dir / "plano_hidrografico.tex"
     tex_path.write_text(_report_tex(summary, figures, subbasins), encoding="utf-8")
     plan_tex_path.write_text(_plan_tex(summary, figures), encoding="utf-8")
-
     report_pdf, report_error = _compile(tex_path, output_dir)
     plan_pdf, plan_error = _compile(plan_tex_path, output_dir)
     errors = [error for error in (report_error, plan_error) if error]
