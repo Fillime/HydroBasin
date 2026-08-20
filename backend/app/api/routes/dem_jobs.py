@@ -126,9 +126,9 @@ async def _run_auto_download(job_id: str, source: str, lat: float, lng: float) -
     def progress(round_index: int, max_rounds: int, bounds: dict, phase: str) -> None:
         messages = {
             "coarse_downloading": f"Fase 1 · localización 90 m · iteración {round_index}/{max_rounds}: descargando DEM preliminar…",
-            "coarse_checking": f"Fase 1 · localización 90 m · iteración {round_index}/{max_rounds}: verificando divisoria…",
-            "fine_downloading": f"Fase 2 · resolución final · verificación {round_index}/{max_rounds}: descargando {source}…",
-            "fine_checking": f"Fase 2 · resolución final · verificación {round_index}/{max_rounds}: comprobando que la cuenca quede contenida…",
+            "coarse_checking": f"Fase 1 · localización 90 m · iteración {round_index}/{max_rounds}: delimitando y verificando bordes…",
+            "final_downloading": f"Fase 2 · resolución final: descargando {source} únicamente sobre cuenca + buffer…",
+            "final_ready": f"Fase 2 · {source} recibido. La delimitación de alta resolución se hará una sola vez al ejecutar el análisis.",
         }
         _jobs[job_id].update({
             "status": "processing",
@@ -147,15 +147,11 @@ async def _run_auto_download(job_id: str, source: str, lat: float, lng: float) -
             destination_dir=job_dir,
             progress=progress,
         )
-        _jobs[job_id].update({"status": "processing", "message": "DEM definitivo encontrado. Generando vista previa…"})
+        _jobs[job_id].update({"status": "processing", "message": "DEM definitivo recibido. Generando vista previa…"})
         preview = await asyncio.to_thread(_preview_from_path, path)
-        contained = bool(adaptive.get("contained"))
         coarse_rounds = adaptive.get("rounds", 1)
-        fine_rounds = adaptive.get("fine_rounds", 1)
         message = (
-            f"DEM automático listo · localización COP90 en {coarse_rounds} iteración(es) + {source} final en {fine_rounds} verificación(es)."
-            if contained
-            else f"DEM final generado con {source}, pero la divisoria todavía toca un borde; revisa la extensión antes del análisis definitivo."
+            f"DEM automático listo · cuenca localizada con COP90 en {coarse_rounds} iteración(es) y {source} descargado sobre la envolvente con buffer."
         )
         _jobs[job_id].update({
             "status": "ready",
