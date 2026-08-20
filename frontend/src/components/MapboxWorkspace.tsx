@@ -40,10 +40,8 @@ function polygonFromBounds(bounds: MapBounds | null) {
       geometry: {
         type: 'Polygon',
         coordinates: [[
-          [bounds.west, bounds.south],
-          [bounds.east, bounds.south],
-          [bounds.east, bounds.north],
-          [bounds.west, bounds.north],
+          [bounds.west, bounds.south], [bounds.east, bounds.south],
+          [bounds.east, bounds.north], [bounds.west, bounds.north],
           [bounds.west, bounds.south],
         ]],
       },
@@ -76,24 +74,24 @@ function geoJsonBounds(data: GeoJsonData): [[number, number], [number, number]] 
 }
 
 export default function MapboxWorkspace({
-  outlet,
-  onPickOutlet,
-  demPreview,
-  watershedGeoJson,
-  drainageGeoJson,
-  subbasinsGeoJson,
-  layers,
-  selectingArea,
-  areaBounds,
-  onAreaSelected,
-  onAreaFirstPoint,
+  outlet, onPickOutlet, demPreview, watershedGeoJson, drainageGeoJson, subbasinsGeoJson,
+  layers, selectingArea, areaBounds, onAreaSelected, onAreaFirstPoint,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapboxMap | null>(null)
   const firstAreaPointRef = useRef<MapOutlet | null>(null)
+  const selectingAreaRef = useRef(selectingArea)
+  const onPickOutletRef = useRef(onPickOutlet)
+  const onAreaSelectedRef = useRef(onAreaSelected)
+  const onAreaFirstPointRef = useRef(onAreaFirstPoint)
   const [basemap, setBasemap] = useState<BasemapId>('terrain')
   const [ready, setReady] = useState(false)
   const token = (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined)?.trim() || ''
+
+  selectingAreaRef.current = selectingArea
+  onPickOutletRef.current = onPickOutlet
+  onAreaSelectedRef.current = onAreaSelected
+  onAreaFirstPointRef.current = onAreaFirstPoint
 
   const openStyle = useMemo(() => ({
     version: 8 as const,
@@ -126,16 +124,11 @@ export default function MapboxWorkspace({
 
     if (demPreview) {
       const b = demPreview.bounds_wgs84
-      if (!map.getSource('hb-dem')) {
-        map.addSource('hb-dem', {
-          type: 'image',
-          url: demPreview.preview_data_url,
-          coordinates: [[b.west, b.north], [b.east, b.north], [b.east, b.south], [b.west, b.south]],
-        })
-      } else {
-        const source = map.getSource('hb-dem') as mapboxgl.ImageSource
-        source.updateImage({ url: demPreview.preview_data_url, coordinates: [[b.west, b.north], [b.east, b.north], [b.east, b.south], [b.west, b.south]] })
-      }
+      const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+        [b.west, b.north], [b.east, b.north], [b.east, b.south], [b.west, b.south],
+      ]
+      if (!map.getSource('hb-dem')) map.addSource('hb-dem', { type: 'image', url: demPreview.preview_data_url, coordinates })
+      else (map.getSource('hb-dem') as mapboxgl.ImageSource).updateImage({ url: demPreview.preview_data_url, coordinates })
       if (!map.getLayer('hb-dem-layer')) map.addLayer({ id: 'hb-dem-layer', type: 'raster', source: 'hb-dem', paint: { 'raster-opacity': 0.62 } })
       map.setLayoutProperty('hb-dem-layer', 'visibility', layers.DEM ? 'visible' : 'none')
     }
@@ -169,6 +162,7 @@ export default function MapboxWorkspace({
       if (!map.getSource('mapbox-dem')) map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 })
       map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.35 })
       if (!map.getLayer('hb-hillshade')) map.addLayer({ id: 'hb-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-exaggeration': 0.32 } })
+      visibility(['hb-hillshade'], Boolean(layers.Hillshade))
     } else if (map.getTerrain()) {
       map.setTerrain(null)
     }
@@ -192,33 +186,35 @@ export default function MapboxWorkspace({
     map.addControl(new mapboxgl.FullscreenControl(), 'top-right')
     map.addControl(new mapboxgl.ScaleControl({ unit: 'metric', maxWidth: 120 }), 'bottom-left')
 
-    map.on('load', () => { setReady(true); syncOperationalLayers(map) })
-    map.on('style.load', () => { setReady(true); syncOperationalLayers(map) })
+    map.on('load', () => setReady(true))
+    map.on('style.load', () => setReady(true))
     map.on('click', (event) => {
       const point = { lat: event.lngLat.lat, lng: event.lngLat.lng }
-      if (selectingArea) {
+      if (selectingAreaRef.current) {
         const first = firstAreaPointRef.current
         if (!first) {
           firstAreaPointRef.current = point
-          onAreaFirstPoint?.()
+          onAreaFirstPointRef.current?.()
         } else {
           firstAreaPointRef.current = null
-          onAreaSelected({ west: Math.min(first.lng, point.lng), east: Math.max(first.lng, point.lng), south: Math.min(first.lat, point.lat), north: Math.max(first.lat, point.lat) })
+          onAreaSelectedRef.current({
+            west: Math.min(first.lng, point.lng), east: Math.max(first.lng, point.lng),
+            south: Math.min(first.lat, point.lat), north: Math.max(first.lat, point.lat),
+          })
         }
       } else {
-        onPickOutlet(point)
+        onPickOutletRef.current(point)
       }
     })
 
     return () => { map.remove(); mapRef.current = null }
-    // Initialization intentionally runs once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     firstAreaPointRef.current = null
     const map = mapRef.current
-    if (map) map.getCanvas().style.cursor = selectingArea ? 'crosshair' : 'crosshair'
+    if (map) map.getCanvas().style.cursor = 'crosshair'
   }, [selectingArea])
 
   useEffect(() => {
