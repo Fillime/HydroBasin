@@ -35,6 +35,122 @@
   justify-content: flex-start;
 }
 
+.current-project-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.project-save-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  color: var(--hb-text-3);
+  font-size: 11px;
+}
+
+.project-save-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+.project-save-state i.saved {
+  background: var(--hb-accent);
+}
+
+.project-list-local {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.local-project-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--hb-border);
+  border-radius: 8px;
+  background: var(--hb-bg-2);
+}
+
+.local-project-card.active {
+  border-color: color-mix(in srgb, var(--hb-accent) 55%, var(--hb-border));
+  box-shadow: inset 3px 0 0 var(--hb-accent);
+}
+
+.local-project-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 0;
+  background: transparent;
+  color: var(--hb-text-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.local-project-main:hover {
+  background: var(--hb-hover);
+}
+
+.local-project-main strong,
+.local-project-main span,
+.local-project-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-project-main strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.local-project-main span {
+  color: var(--hb-text-2);
+  font-size: 10px;
+}
+
+.local-project-main small {
+  color: var(--hb-text-3);
+  font-size: 9px;
+}
+
+.local-project-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px;
+  border-left: 1px solid var(--hb-border);
+}
+
+.local-project-actions button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--hb-text-3);
+  cursor: pointer;
+}
+
+.local-project-actions button:hover {
+  background: var(--hb-hover);
+  color: var(--hb-text-1);
+}
+
+.project-save-row {
+  color: var(--hb-text-3);
+  font-size: 10px;
+}
+
 @media (max-width: 1180px) {
   .preset-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
