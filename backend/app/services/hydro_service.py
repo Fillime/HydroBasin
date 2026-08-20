@@ -8,6 +8,14 @@ ENGINE_ROOT = Path(__file__).resolve().parents[3] / "engine"
 if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
 
+# Mantener la generación de figuras existente y sustituir únicamente la plantilla
+# documental. Se hace antes de importar workflow porque workflow enlaza
+# generar_informes al cargar el módulo.
+import hydrobasin_engine.report as report_module  # noqa: E402
+from hydrobasin_engine.report_v2 import generar_informes as generar_informes_v2  # noqa: E402
+
+report_module.generar_informes = generar_informes_v2
+
 from hydrobasin_engine.workflow import run_watershed_analysis  # noqa: E402
 
 
