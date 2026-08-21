@@ -13,6 +13,7 @@ import matplotlib
 matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 
+from .export_excel import export_ideam_and_hydrology_excel
 from .location import location_label, resolve_administrative_location
 from .plan_drawing import generar_plano_pdf
 from .report_docx import generar_informe_docx
@@ -875,12 +876,20 @@ def generar_informes(
     except Exception as exc:
         plan_err = str(exc)
 
+    # 5. Exportación a Excel (.xlsx) de Estaciones IDEAM, Thiessen, IDF y Caudales
+    excel_path = output_dir / "estaciones_ideam.xlsx"
+    try:
+        export_ideam_and_hydrology_excel(excel_path, summary)
+    except Exception:
+        excel_path = None
+
     errors = [e for e in (report_err, plan_err) if e]
 
     return {
         "tex": report_tex.name,
         "pdf": report_pdf.name if report_pdf else None,
         "docx": docx_path.name if docx_path and docx_path.exists() else None,
+        "excel": excel_path.name if excel_path and excel_path.exists() else None,
         "plan_tex": None,
         "plan_pdf": plan_pdf_path.name if plan_pdf_path.exists() else None,
         "compiled": bool(report_pdf and plan_pdf_path.exists()),

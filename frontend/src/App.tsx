@@ -11,6 +11,7 @@ import {
   Download,
   Droplets,
   Edit2,
+  FileSpreadsheet,
   FileText,
   FileUp,
   FolderOpen,
@@ -1365,6 +1366,14 @@ export default function App() {
                 <MapIcon size={14} /> Plano Hidrográfico PDF (2 hojas)
               </button>
             )}
+            <button
+              type="button"
+              className="secondary-button wide"
+              onClick={() => downloadArtifact('estaciones_ideam.xlsx')}
+              title="Descargar registro completo de estaciones IDEAM, Thiessen, IDF, caudales y series en Excel (.xlsx)"
+            >
+              <FileSpreadsheet size={14} /> Estaciones y Caudales (Excel .xlsx)
+            </button>
             <button
               type="button"
               className="secondary-button wide"

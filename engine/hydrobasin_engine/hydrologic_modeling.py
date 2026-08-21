@@ -17,10 +17,12 @@ def compute_peak_discharges(
     design_intensities: dict[str, float],
     output_fig_path: Path | None = None,
 ) -> tuple[dict[str, Any], str | None]:
-    """Calcula los caudales pico de diseño por el Método Racional y el Hidrograma Unitario del SCS."""
-    area = max(0.01, area_km2)
-    tc = max(0.05, tc_hours)
-    cn = max(40.0, min(98.0, cn_weighted))
+    """Calcula los caudales pico de diseño por el Método Racional y el Hidrograma Unitario del SCS.
+    Genera curvas continuas realistas basadas en la función Gamma del Hidrograma Adimensional del SCS (USDA-NRCS).
+    """
+    area = max(0.01, float(area_km2))
+    tc = max(0.05, float(tc_hours))
+    cn = max(40.0, min(98.0, float(cn_weighted)))
 
     # Parámetro de retención SCS S [mm]
     s_mm = (25400.0 / cn) - 254.0
@@ -30,8 +32,10 @@ def compute_peak_discharges(
     c_rational = round(min(0.95, max(0.15, (cn - 45.0) / 55.0 * 0.70 + 0.15)), 2)
 
     # Tiempo al pico SCS tp [horas]
+    # En hidrología SCS, tp = D/2 + tl = 0.6 * Tc
     tp_hours = max(0.05, 0.6 * tc)
-    tb_hours = 2.67 * tp_hours  # Tiempo base [horas]
+    # Tiempo base aproximado tb = 4.5 a 5.0 * tp para la función curvilínea completa
+    tb_hours = max(1.0, 4.5 * tp_hours)
 
     results_tr: list[dict[str, Any]] = []
     hydrographs: dict[str, dict[str, list[float]]] = {}
@@ -44,6 +48,11 @@ def compute_peak_discharges(
         ("Tr_50", 50),
         ("Tr_100", 100),
     ]
+
+    # Vector de tiempo continuo de alta densidad (120 pasos) para curvas suaves y realistas
+    t_arr = np.linspace(0, tb_hours, 120)
+    # Factor de forma Gamma adimensional del SCS (m = 3.5 ajusta la curvatura del hidrograma SCS)
+    m_shape = 3.5
 
     for tr_key, tr_val in return_periods:
         i_mm_h = design_intensities.get(tr_key) or (design_intensities.get(f"Tr_{tr_val}") or 50.0)
@@ -76,17 +85,13 @@ def compute_peak_discharges(
             "caudal_diseno_m3_s": q_diseno,
         })
 
-        # Generar hidrograma sintético Q(t)
-        t_arr = np.linspace(0, tb_hours * 1.6, 50)
-        q_arr = []
-        for t in t_arr:
-            if t <= tp_hours:
-                qt = q_diseno * (t / tp_hours)
-            elif t <= tb_hours:
-                qt = q_diseno * (1.0 - (t - tp_hours) / (tb_hours - tp_hours))
-            else:
-                qt = 0.0
-            q_arr.append(round(max(0.0, float(qt)), 2))
+        # Hidrograma Sintético Adimensional Curvilíneo del SCS:
+        # q(t) = Qp * (t / tp)^m * exp(m * (1 - t / tp))
+        ratio = np.maximum(1e-6, t_arr / tp_hours)
+        q_curve = q_diseno * (ratio ** m_shape) * np.exp(m_shape * (1.0 - ratio))
+        q_curve[0] = 0.0  # Comienzo suave en cero
+        # Asegurar no negatividad y redondeo
+        q_arr = [round(max(0.0, float(val)), 2) for val in q_curve]
 
         hydrographs[f"Tr_{tr_val}"] = {
             "time_hours": [round(float(t), 2) for t in t_arr],
@@ -97,7 +102,7 @@ def compute_peak_discharges(
     fig_str = None
     if output_fig_path:
         try:
-            fig, ax = plt.subplots(figsize=(8.5, 5.5), dpi=200)
+            fig, ax = plt.subplots(figsize=(9.2, 5.8), dpi=220)
             fig.patch.set_facecolor("#ffffff")
             ax.set_facecolor("#f8fafc")
 
@@ -105,17 +110,25 @@ def compute_peak_discharges(
             for i, (tr_key, tr_val) in enumerate(return_periods):
                 h_data = hydrographs[f"Tr_{tr_val}"]
                 c = colors[i % len(colors)]
-                ax.plot(h_data["time_hours"], h_data["flow_m3_s"], label=f"Tr = {tr_val} años (Qp = {results_tr[i]['caudal_diseno_m3_s']} m³/s)", color=c, linewidth=1.8)
+                ax.plot(
+                    h_data["time_hours"],
+                    h_data["flow_m3_s"],
+                    label=f"Tr = {tr_val} años (Qp = {results_tr[i]['caudal_diseno_m3_s']:,.2f} m³/s)",
+                    color=c,
+                    linewidth=2.2,
+                )
 
-            ax.set_title("Hidrogramas de Caudal de Diseño para Diferentes Periodos de Retorno", fontsize=10.5, fontweight="bold")
-            ax.set_xlabel("Tiempo (horas)", fontsize=8.5)
-            ax.set_ylabel("Caudal de Escorrentía (m³/s)", fontsize=8.5)
-            ax.grid(True, color="#cbd5e1", linestyle="--", linewidth=0.5, alpha=0.7)
-            ax.tick_params(labelsize=8)
-            ax.legend(loc="upper right", fontsize=7.5, framealpha=0.95)
+            ax.set_title("Hidrogramas de Caudal de Diseño para Diferentes Periodos de Retorno (SCS Sintético)", fontsize=11.5, fontweight="bold", pad=12)
+            ax.set_xlabel("Tiempo transcurrido desde el inicio de la tormenta (horas)", fontsize=9.5, labelpad=8)
+            ax.set_ylabel("Caudal de Escorrentía Directa Q(t) (m³/s)", fontsize=9.5, labelpad=8)
+            ax.grid(True, color="#cbd5e1", linestyle="--", linewidth=0.6, alpha=0.75)
+            ax.tick_params(labelsize=8.5)
+            ax.set_xlim(0, float(tb_hours))
+            ax.set_ylim(bottom=0)
+            ax.legend(loc="upper right", fontsize=8.5, framealpha=0.96, shadow=True)
 
             output_fig_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(output_fig_path, dpi=200, bbox_inches="tight", facecolor="white")
+            fig.savefig(output_fig_path, dpi=220, bbox_inches="tight", facecolor="white")
             plt.close(fig)
             fig_str = str(output_fig_path)
         except Exception:
