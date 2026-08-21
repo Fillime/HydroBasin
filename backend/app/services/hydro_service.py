@@ -28,6 +28,10 @@ def analyze_dem(
     output_dir: Path,
     minimum_area_km2: float | None = None,
     dem_source: str | None = None,
+    project_name: str | None = None,
+    client: str | None = None,
+    calculated_by: str | None = None,
+    reviewed_by: str | None = None,
     progress: Callable[[str, str, int], None] | None = None,
 ) -> dict:
     return run_watershed_analysis(
@@ -39,6 +43,10 @@ def analyze_dem(
         drainage_threshold=threshold,
         minimum_area_km2=minimum_area_km2,
         dem_source=dem_source,
+        project_name=project_name,
+        client=client,
+        calculated_by=calculated_by,
+        reviewed_by=reviewed_by,
         progress=progress,
     )
 
@@ -50,3 +58,33 @@ def recalculate_basin_from_job(results_dir: Path, x: float, y: float, point_crs:
         y=y,
         point_crs=point_crs,
     )
+
+
+def reprocess_analysis(
+    results_dir: Path,
+    mode: str,
+    x: float,
+    y: float,
+    point_crs: str = "EPSG:4326",
+    minimum_area_km2: float = 5.0,
+    project_name: str | None = None,
+    client: str | None = None,
+    calculated_by: str | None = None,
+    reviewed_by: str | None = None,
+    progress: Callable[[str, str, int], None] | None = None,
+) -> dict:
+    from hydrobasin_engine.reprocess import reprocess_stage
+    return reprocess_stage(
+        results_dir=results_dir,
+        mode=mode,
+        x=x,
+        y=y,
+        point_crs=point_crs,
+        minimum_area_km2=minimum_area_km2,
+        project_name=project_name,
+        client=client,
+        calculated_by=calculated_by,
+        reviewed_by=reviewed_by,
+        progress=progress,
+    )
+

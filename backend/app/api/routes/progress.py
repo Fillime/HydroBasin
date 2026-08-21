@@ -52,6 +52,10 @@ async def watershed_stream(
     point_crs: str = Form("EPSG:4326"),
     minimum_area_km2: float = Form(5.0),
     dem_source: str | None = Form(None),
+    project_name: str | None = Form(None),
+    client: str | None = Form(None),
+    calculated_by: str | None = Form(None),
+    reviewed_by: str | None = Form(None),
 ):
     if not dem and not dem_id:
         raise HTTPException(status_code=400, detail="Debes cargar un DEM o seleccionar uno descargado en el servidor.")
@@ -90,6 +94,10 @@ async def watershed_stream(
     def run() -> None:
         try:
             progress("info", f"Proceso {job_id[:8]} iniciado.", 0)
+            if project_name:
+                progress("info", f"Proyecto: {project_name}.", 1)
+            if client:
+                progress("info", f"Cliente: {client}.", 1)
             if dem_source:
                 progress("info", f"Fuente DEM: {dem_source}.", 1)
             if dem_id:
@@ -102,6 +110,10 @@ async def watershed_stream(
                 threshold=None,
                 minimum_area_km2=minimum_area_km2,
                 dem_source=dem_source,
+                project_name=project_name,
+                client=client,
+                calculated_by=calculated_by,
+                reviewed_by=reviewed_by,
                 output_dir=output_dir,
                 progress=progress,
             )
@@ -125,3 +137,70 @@ async def watershed_stream(
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache"},
     )
+
+
+@router.post("/reprocess-stream")
+async def reprocess_stream(
+    job_id: str = Form(...),
+    mode: str = Form(...),  # 'report' | 'hydrology' | 'streams' | 'delineation'
+    x: float = Form(...),
+    y: float = Form(...),
+    point_crs: str = Form("EPSG:4326"),
+    minimum_area_km2: float = Form(5.0),
+    project_name: str | None = Form(None),
+    client: str | None = Form(None),
+    calculated_by: str | None = Form(None),
+    reviewed_by: str | None = Form(None),
+):
+    """Re-procesa el análisis desde una etapa específica reutilizando cálculos intermedios."""
+    if not job_id or any(ch not in "0123456789abcdefABCDEF" for ch in job_id):
+        raise HTTPException(status_code=400, detail="Identificador de trabajo no válido.")
+
+    results_dir = settings.workspace_dir / job_id / "results"
+    if not results_dir.exists():
+        raise HTTPException(status_code=404, detail="No se encontraron los resultados del análisis previo para re-procesar.")
+
+    from app.services.hydro_service import reprocess_analysis
+
+    events: queue.Queue[dict] = queue.Queue()
+
+    def progress(level: str, message: str, percent: int) -> None:
+        events.put({"type": "log", "level": level, "message": message, "percent": percent})
+
+    def run() -> None:
+        try:
+            progress("info", f"Re-procesando etapa '{mode}' para {job_id[:8]}…", 5)
+            result = reprocess_analysis(
+                results_dir=results_dir,
+                mode=mode,
+                x=x,
+                y=y,
+                point_crs=point_crs,
+                minimum_area_km2=minimum_area_km2,
+                project_name=project_name,
+                client=client,
+                calculated_by=calculated_by,
+                reviewed_by=reviewed_by,
+                progress=progress,
+            )
+            events.put({"type": "result", "job_id": job_id, **result})
+        except Exception as exc:
+            events.put({"type": "error", "level": "error", "message": str(exc), "percent": 100})
+        finally:
+            events.put({"type": "done"})
+
+    _executor.submit(run)
+
+    def event_stream():
+        while True:
+            event = events.get()
+            yield json.dumps(event, ensure_ascii=False) + "\n"
+            if event.get("type") == "done":
+                break
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache"},
+    )
+

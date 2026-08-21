@@ -50,15 +50,39 @@ def _plot_profile(figures_dir: Path, summary: dict) -> str | None:
     elevations = summary.get("profile_elevation_m") or []
     if len(distances) < 2 or len(distances) != len(elevations):
         return None
-    fig, ax = plt.subplots(figsize=(9, 3.5))
-    ax.plot(distances, elevations, linewidth=1.8)
-    ax.fill_between(distances, elevations, min(elevations), alpha=0.18)
-    ax.set_title("Perfil longitudinal del cauce principal")
-    ax.set_xlabel("Distancia desde el exutorio (km)")
-    ax.set_ylabel("Elevación (m)")
-    ax.grid(True, alpha=0.22)
+    fig, ax = plt.subplots(figsize=(10, 4.2))
+    ax.plot(distances, elevations, color="#1f9d8f", linewidth=2.2, label="Perfil altimétrico")
+    min_elev = min(elevations)
+    max_elev = max(elevations)
+    ax.fill_between(distances, elevations, min_elev, color="#1f9d8f", alpha=0.15)
+    
+    # Anotaciones de puntos extremos
+    ax.scatter([distances[0]], [elevations[0]], color="#ef4444", s=50, zorder=5)
+    ax.annotate(f"Exutorio: {elevations[0]:.1f} m", (distances[0], elevations[0]),
+                xytext=(8, 8), textcoords="offset points", fontsize=9, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=.2", fc="white", ec="#ef4444", lw=1))
+    
+    ax.scatter([distances[-1]], [elevations[-1]], color="#2563eb", s=50, zorder=5)
+    ax.annotate(f"Cabecera: {elevations[-1]:.1f} m", (distances[-1], elevations[-1]),
+                xytext=(-70, 8), textcoords="offset points", fontsize=9, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=.2", fc="white", ec="#2563eb", lw=1))
+
+    slope_pct = summary.get("main_channel_slope_percent")
+    length_km = summary.get("main_channel_length_km")
+    info_text = f"Longitud: {length_km:.2f} km" if length_km else ""
+    if slope_pct:
+        info_text += f" | Pendiente media: {slope_pct:.2f}%"
+    
+    if info_text:
+        ax.text(0.03, 0.92, info_text, transform=ax.transAxes, fontsize=9,
+                verticalalignment="top", bbox=dict(boxstyle="round,pad=.3", fc="#f8fafc", ec="#cbd5e1", lw=1))
+
+    ax.set_title("Perfil Longitudinal del Cauce Principal", fontsize=11, fontweight="bold")
+    ax.set_xlabel("Distancia acumulada desde el exutorio (km)", fontsize=9.5)
+    ax.set_ylabel("Elevación (msnm)", fontsize=9.5)
+    ax.grid(True, linestyle="--", alpha=0.35)
     path = figures_dir / "07_perfil_cauce_principal.png"
-    _save(fig, path)
+    _save(fig, path, dpi=220)
     return "figuras/07_perfil_cauce_principal.png"
 
 
@@ -317,7 +341,7 @@ def _interpretation(summary: dict) -> str:
     if dd is not None:
         parts.append(f"La densidad de drenaje es {_n(dd, 3)} km/km$^2$ y se clasifica como {_latex_escape(summary.get('clasificacion_densidad_drenaje') or 'sin clasificación')}. Este valor depende directamente del umbral de área mínima empleado para extraer la red.")
     if summary.get("main_channel_length_km") is not None:
-        parts.append(f"El cauce principal presenta una longitud aproximada de {_n(summary.get('main_channel_length_km'))} km y una pendiente media de {_n(summary.get('main_channel_slope_percent'), 2)}\%. Estos parámetros se utilizan para caracterizar la trayectoria principal de evacuación del flujo y estimar tiempos de concentración.")
+        parts.append(rf"El cauce principal presenta una longitud aproximada de {_n(summary.get('main_channel_length_km'))} km y una pendiente media de {_n(summary.get('main_channel_slope_percent'), 2)}\%. Estos parámetros se utilizan para caracterizar la trayectoria principal de evacuación del flujo y estimar tiempos de concentración.")
     return "\n\n".join(parts) or "Los indicadores deben interpretarse conjuntamente con la calidad del DEM, el umbral de drenaje y la posición del exutorio."
 
 
@@ -589,21 +613,5 @@ def _compile(tex_path: Path, output_dir: Path) -> tuple[Path | None, str | None]
 
 
 def generar_informes(output_dir: Path, summary: dict, figures: dict[str, str], subbasins=None, main_channel=None) -> dict:
-    output_dir = output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tex_path = output_dir / "informe_hydrobasin.tex"
-    plan_tex_path = output_dir / "plano_hidrografico.tex"
-    tex_path.write_text(_report_tex(summary, figures, subbasins), encoding="utf-8")
-    plan_tex_path.write_text(_plan_tex(summary, figures), encoding="utf-8")
-    report_pdf, report_error = _compile(tex_path, output_dir)
-    plan_pdf, plan_error = _compile(plan_tex_path, output_dir)
-    errors = [error for error in (report_error, plan_error) if error]
-    return {
-        "tex": tex_path.name,
-        "pdf": report_pdf.name if report_pdf else None,
-        "plan_tex": plan_tex_path.name,
-        "plan_pdf": plan_pdf.name if plan_pdf else None,
-        "compiled": bool(report_pdf and plan_pdf),
-        "compiler_found": bool(_find_tectonic()),
-        "compile_error": " | ".join(errors) if errors else None,
-    }
+    from .report_professional import generar_informes as _generar_informes_pro
+    return _generar_informes_pro(output_dir, summary, figures, subbasins=subbasins, main_channel=main_channel)

@@ -8,15 +8,22 @@ import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 
+from .curve_number import compute_curve_number
 from .dem import cargar_y_corregir_dem, metadatos_dem, umbral_celdas_desde_area
 from .delineation import ajustar_punto_salida, delimitar_cuenca, transformar_punto
 from .hydrology import acumulacion_flujo, direccion_flujo, orden_strahler
+from .hydrologic_modeling import compute_peak_discharges
+from .idf_curves import compute_idf_curves
 from .io import guardar_raster, guardar_shapefile_zip, guardar_vector, mascara_a_poligono
+from .location import resolve_administrative_location
 from .main_channel import extraer_cauce_principal, tiempos_concentracion
+from .meteorology import fetch_ideam_stations, plot_stations_map
 from .morphometry import parametros_morfometricos
-from .report import generar_figuras, generar_informes
+from .report import generar_figuras
+from .report_professional import generar_informes
 from .streams import extraer_red_vectorial
 from .subbasins import delimitar_subcuencas
+from .thiessen import compute_thiessen_polygons
 
 ProgressCallback = Callable[[str, str, int], None]
 
@@ -90,6 +97,10 @@ def run_watershed_analysis(
     minimum_area_km2: float | None = None,
     snap_threshold: float | None = None,
     dem_source: str | None = None,
+    project_name: str | None = None,
+    client: str | None = None,
+    calculated_by: str | None = None,
+    reviewed_by: str | None = None,
     progress: ProgressCallback | None = None,
 ) -> dict:
     def report(level: str, message: str, percent: int) -> None:
@@ -219,6 +230,10 @@ def run_watershed_analysis(
     relief_metrics = _masked_elevation_stats(corrected_dem, watershed_mask)
 
     summary = {
+        "project_name": project_name,
+        "client": client,
+        "calculated_by": calculated_by,
+        "reviewed_by": reviewed_by,
         "dem_source": dem_source or "GeoTIFF cargado por el usuario",
         "crs_dem": metadata["crs"],
         "dem_width": metadata["width"],
@@ -237,7 +252,58 @@ def run_watershed_analysis(
         **relief_metrics,
     }
 
-    report("info", "Generando cartografía, perfil y plano técnico…", 92)
+    # =========================================================================
+    # SUITE HIDROLÓGICA AVANZADA: IDEAM, THIESSEN, IDF, SCS-CN Y CAUDALES PICO
+    # =========================================================================
+    report("info", "Consultando catálogo de estaciones oficiales del IDEAM…", 88)
+    loc = resolve_administrative_location(float(y), float(x))
+    stations = fetch_ideam_stations(float(y), float(x), department=loc.get("department", ""), radius_km=50.0)
+    summary["ideam_stations"] = stations
+
+    fig_dir = output_dir / "figuras"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Mapa de Estaciones IDEAM
+    st_fig_path = fig_dir / "08_estaciones_ideam.png"
+    st_fig = plot_stations_map(st_fig_path, stations, watershed, float(y), float(x), loc)
+
+    # 2. Polígonos de Thiessen
+    report("info", "Calculando Polígonos de Thiessen y ponderaciones pluviométricas…", 90)
+    thiessen_fig_path = fig_dir / "09_poligonos_thiessen.png"
+    thiessen_weights, thiessen_fig = compute_thiessen_polygons(stations, watershed, thiessen_fig_path)
+    summary["thiessen_weights"] = thiessen_weights
+
+    # 3. Curvas IDF
+    report("info", "Calculando Curvas Intensidad-Duración-Frecuencia (IDF)…", 92)
+    tc_avg_h = float(summary.get("tc_promedio_h") or 1.0)
+    tc_avg_min = tc_avg_h * 60.0
+    idf_fig_path = fig_dir / "10_curvas_idf.png"
+    base_station_name = stations[0]["nombre"] if stations else "Estación Regional"
+    idf_data, idf_fig = compute_idf_curves(tc_avg_min, station_name=base_station_name, output_fig_path=idf_fig_path)
+    summary["idf_curves"] = idf_data
+
+    # 4. Número de Curva SCS (CN)
+    report("info", "Estimando Número de Curva SCS (CN) y matriz de coberturas…", 93)
+    cn_fig_path = fig_dir / "11_distribucion_cn.png"
+    total_area_km2 = float(summary.get("area_km2") or 1.0)
+    cn_data, cn_fig = compute_curve_number(total_area_km2, output_fig_path=cn_fig_path)
+    summary["curve_number"] = cn_data
+    summary["cn_weighted"] = cn_data["cn_weighted"]
+
+    # 5. Modelación de Caudales Máximos y Hietogramas de Diseño
+    report("info", "Modelando hidrogramas y caudales máximos de diseño por Tr…", 94)
+    hydro_fig_path = fig_dir / "12_hidrogramas_diseno.png"
+    peak_flows, hydro_fig = compute_peak_discharges(
+        total_area_km2,
+        tc_avg_h,
+        cn_data["cn_weighted"],
+        idf_data["design_intensities_mm_h"],
+        output_fig_path=hydro_fig_path,
+    )
+    summary["hydrologic_modeling"] = peak_flows
+    summary["peak_discharges"] = peak_flows["results_by_return_period"]
+
+    report("info", "Generando cartografía, perfil y plano técnico…", 95)
     dem_context = _dem_context_preview(dem_path)
     figures = generar_figuras(
         output_dir,
@@ -254,15 +320,29 @@ def run_watershed_analysis(
         summary=summary,
         flow_direction=flow_direction,
     )
-    report("ok", "Cartografía, perfil longitudinal y plano base generados.", 96)
 
-    report("info", "Generando informe y plano PDF desde LaTeX con Tectonic…", 97)
+    if st_fig:
+        figures["stations_map"] = "figuras/08_estaciones_ideam.png"
+    if thiessen_fig:
+        figures["thiessen_map"] = "figuras/09_poligonos_thiessen.png"
+    if idf_fig:
+        figures["idf_curves"] = "figuras/10_curvas_idf.png"
+    if cn_fig:
+        figures["curve_number"] = "figuras/11_distribucion_cn.png"
+    if hydro_fig:
+        figures["hydrographs"] = "figuras/12_hidrogramas_diseno.png"
+
+    report("ok", "Cartografía, perfil longitudinal y modelos hidrológicos generados.", 96)
+
+    report("info", "Generando informe técnico y plano hidrográfico A3…", 97)
     report_files = generar_informes(
         output_dir,
         summary,
         figures,
         subbasins=subbasins,
         main_channel=main_channel,
+        watershed=watershed,
+        drainage=drainage,
     )
     if report_files.get("compiled"):
         report("ok", "Informe PDF y plano hidrográfico compilados desde LaTeX con Tectonic.", 99)
@@ -281,6 +361,8 @@ def run_watershed_analysis(
         "figures": figures,
         "report": report_files,
     }
-    (output_dir / "resumen.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary_json_text = json.dumps(summary, ensure_ascii=False, indent=2)
+    (output_dir / "resumen.json").write_text(summary_json_text, encoding="utf-8")
+    (output_dir / "summary.json").write_text(summary_json_text, encoding="utf-8")
     report("ok", "Análisis completado. Informe, plano, perfiles y capas GIS listos.", 100)
     return result

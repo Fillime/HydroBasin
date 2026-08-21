@@ -1,6 +1,10 @@
 export type StoredProject<TPayload = unknown> = {
   id: string
   name: string
+  client?: string
+  calculatedBy?: string
+  reviewedBy?: string
+  description?: string
   createdAt: string
   updatedAt: string
   payload: TPayload

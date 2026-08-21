@@ -30,13 +30,23 @@ def _query(layer: str, lat: float, lon: float, out_fields: str) -> dict | None:
     return features[0].get("attributes") if features else None
 
 
-def resolve_administrative_location(lat: float, lon: float) -> dict:
-    """Replica el criterio territorial usado por SGI Cotizaciones.
+def _format_name(val: str) -> str:
+    if not val:
+        return ""
+    words = val.strip().split()
+    lowers = {"de", "del", "la", "las", "el", "los", "y", "en"}
+    result = []
+    for i, w in enumerate(words):
+        wl = w.lower()
+        if i > 0 and wl in lowers:
+            result.append(wl)
+        else:
+            result.append(w.capitalize())
+    return " ".join(result)
 
-    Primero identifica el país mediante ArcGIS World Countries. Para Colombia
-    consulta además la capa municipal y devuelve municipio/departamento. Fuera
-    de Colombia el informe conserva únicamente el país como ubicación administrativa.
-    """
+
+def resolve_administrative_location(lat: float, lon: float) -> dict:
+    """Identifica el país y municipio/departamento mediante ArcGIS."""
     base = {
         "country": "",
         "country_code": "",
@@ -52,7 +62,7 @@ def resolve_administrative_location(lat: float, lon: float) -> dict:
         if not country:
             return base
         code = str(country.get("ISO_CC") or "").upper()
-        name = str(country.get("COUNTRYAFF") or country.get("COUNTRY") or "").strip()
+        name = _format_name(str(country.get("COUNTRYAFF") or country.get("COUNTRY") or ""))
         base.update({"country": name, "country_code": code, "location_resolved": bool(name)})
         if code != COLOMBIA_ISO3:
             return base
@@ -65,9 +75,9 @@ def resolve_administrative_location(lat: float, lon: float) -> dict:
         )
         if municipality:
             base.update({
-                "department": str(municipality.get("DPTO_CNMBR") or "").strip(),
+                "department": _format_name(str(municipality.get("DPTO_CNMBR") or "")),
                 "department_code": str(municipality.get("DPTO_CCDGO") or "").strip(),
-                "municipality": str(municipality.get("MPIO_CNMBR") or "").strip(),
+                "municipality": _format_name(str(municipality.get("MPIO_CNMBR") or "")),
                 "municipality_code": str(municipality.get("MPIO_CCDGO") or "").strip(),
             })
         return base
