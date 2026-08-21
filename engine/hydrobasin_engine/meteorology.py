@@ -98,7 +98,8 @@ def fetch_ideam_stations(
     query_url = f"{IDEAM_DATASET_URL}?$limit=1000"
     if department:
         dep_clean = department.upper().replace(" DEPARTAMENTO", "").strip()
-        where = f"upper(departamento) like '%{dep_clean.replace("'", "''")}%'"
+        dep_sql = dep_clean.replace("'", "''")
+        where = f"upper(departamento) like '%{dep_sql}%'"
         query_url += "&$where=" + urllib.parse.quote(where, safe="()='%")
 
     try:
@@ -110,8 +111,9 @@ def fetch_ideam_stations(
 
     for item in raw:
         try:
-            lat = float(item.get("latitud") or item.get("ubicaci_n", {}).get("latitude"))
-            lon = float(item.get("longitud") or item.get("ubicaci_n", {}).get("longitude"))
+            location = item.get("ubicaci_n") or {}
+            lat = float(item.get("latitud") or location.get("latitude"))
+            lon = float(item.get("longitud") or location.get("longitude"))
         except (ValueError, TypeError, AttributeError):
             continue
         if not -90 <= lat <= 90 or not -180 <= lon <= 180:
