@@ -1,0 +1,410 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{array}
+\usepackage{amsmath}
+
+\geometry{margin=2.2cm}
+\definecolor{hbaccent}{HTML}{1F9D8F}
+\definecolor{hbprimary}{HTML}{176B73}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{HydroBasin Studio -- Estudio Hidrológico}
+\rhead{Informe Técnico}
+\cfoot{\thepage}
+
+\setcounter{tocdepth}{2}
+\setcounter{secnumdepth}{2}
+
+\renewcommand{\listfigurename}{Índice de Figuras}
+\renewcommand{\listtablename}{Índice de Tablas}
+
+\begin{document}
+
+% ============================== PORTADA FORMAL ==============================
+\begin{titlepage}
+\vspace*{0.8cm}
+\noindent
+\begin{tabular}{|p{4.2cm}|p{8.0cm}|p{3.4cm}|}\hline
+\textbf{\color{hbaccent}HYDROBASIN STUDIO} & \textbf{ESTUDIO HIDROLÓGICO Y MORFOMÉTRICO} \newline \small Zarzal & \small Versión 1.0 \newline 21/08/2026 \\\hline
+\end{tabular}\\[2.0cm]
+
+\begin{center}
+{\Huge\bfseries INFORME DE DELIMITACIÓN Y CARACTERIZACIÓN MORFOMÉTRICA DE CUENCA}\\[0.6cm]
+{\Large\bfseries Zarzal}\\[0.3cm]
+{\normalsize Barrancabermeja, Santander, Colombia}\\[2.2cm]
+
+\textbf{RELACIÓN DE REVISIÓN Y AUTORÍA}\\[3mm]
+\begin{tabular}{|p{4.5cm}|p{5.0cm}|p{4.5cm}|}\hline
+\textbf{ELABORÓ:} & \textbf{REVISÓ:} & \textbf{FECHA:} \\\hline
+Jana Criollo & Mario Díaz & 21/08/2026 \\\hline
+\multicolumn{2}{|l|}{\textbf{CLIENTE / ENTIDAD:} IDOM} & \textbf{ESTADO:} Aprobado \\\hline
+\end{tabular}
+\end{center}
+
+\vfill
+\noindent
+{\footnotesize Documento técnico de ingeniería hidrológica generado por HydroBasin Studio. Prohibida su alteración no autorizada.}
+\end{titlepage}
+
+% ============================== ÍNDICES ==============================
+\tableofcontents
+\vspace{0.6cm}
+\listoffigures
+\vspace{0.6cm}
+\listoftables
+\newpage
+
+% ============================== 1. INTRODUCCIÓN ==============================
+\section{Introducción}
+El presente documento corresponde al informe técnico del estudio hidrológico y geomorfológico desarrollado para el proyecto \textbf{Zarzal}, localizado en el municipio de \textbf{Barrancabermeja, Santander, Colombia}. El estudio comprende la delimitación precisa de la divisoria de aguas, caracterización física de la cuenca, consulta y análisis de la red de estaciones meteorológicas oficiales del IDEAM, cálculo de polígonos de Thiessen, curvas Intensidad--Duración--Frecuencia (IDF), determinación del Número de Curva SCS (CN) y modelación de hidrogramas y caudales máximos de escorrentía para diversos periodos de retorno.
+
+% ============================== 2. OBJETIVOS Y ALCANCE ==============================
+\section{Objetivos y Alcance}
+
+\subsection{Objetivo General}
+Delimitar y caracterizar geomorfológica e hidrológicamente la cuenca aportante al punto de interés del proyecto \textbf{Zarzal}, determinando sus parámetros morfométricos, red de drenaje, tiempos de concentración y caudales de diseño hacia el exutorio.
+
+\subsection{Objetivos Específicos}
+\begin{itemize}
+\item Delimitar la cuenca hidrográfica y su red de drenaje a partir de modelos de elevación digital corregidos hidrológicamente.
+\item Calcular los parámetros morfométricos de forma, relieve y red fluvial (Horton, Gravelius, Miller, Strahler).
+\item Subdividir la cuenca en subcuencas tributarias y caracterizar el cauce principal con su perfil altimétrico.
+\item Consultar la red pluviométrica del IDEAM en el área de influencia y ponderar su representatividad mediante Polígonos de Thiessen.
+\item Formular las curvas IDF y determinar el Número de Curva ponderado (SCS-CN) a partir de coberturas y suelos.
+\item Estimar los tiempos de concentración y modelar los caudales máximos de diseño para periodos de retorno de 2.33, 5, 10, 25, 50 y 100 años.
+\end{itemize}
+
+\subsection{Alcance del Estudio}
+El alcance comprende el análisis geomorfométrico automatizado, la modelación hidrometeorológica regional con datos oficiales del IDEAM y la formulación hidrológica mediante el método del Hidrograma Unitario del SCS y el Método Racional para el dimensionamiento de obras civiles y manejo de aguas.
+
+% ============================== 3. LOCALIZACIÓN ==============================
+\section{Localización y Ubicación General}
+Las actividades que engloban el estudio se localizan en la jurisdicción de \textbf{Barrancabermeja, Santander, Colombia}. El punto de cierre o exutorio fijado para la cuenca se ubica en las coordenadas geográficas \textbf{7.064095$^\circ$ Latitud Norte, -73.749877$^\circ$ Longitud Oeste} (WGS84), a una cota de \textbf{72.2 msnm}.
+
+En la Figura~\ref{fig:satelite} se ilustra la localización regional del área de estudio sobre imagen satelital con la posición del punto de aforo.
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\textwidth,height=0.34\textheight,keepaspectratio]{figuras/00_ubicacion_satelital.png}
+\caption{Localización regional del área de estudio sobre imagen satelital Esri World Imagery.}
+\label{fig:satelite}
+\end{figure}
+
+
+% ============================== 4. INFORMACIÓN TOPOGRÁFICA ==============================
+\section{Información Topográfica y Acondicionamiento del Terreno}
+La caracterización geomorfológica se fundamentó en el Modelo Digital de Elevación (DEM) \textit{DEM Satelital}, con una resolución métrica de 30.0 m. Para asegurar la continuidad física del escurrimiento, la superficie topográfica fue sometida a un acondicionamiento hidrológico mediante el relleno de depresiones cerradas (\textit{sinks/pits}) y corrección de zonas planas, garantizando una pendiente continua hacia el punto de descarga.
+
+Sobre el terreno corregido se determinaron las direcciones de flujo empleando el esquema determinístico D8 y se construyó la matriz de acumulación de celdas aportantes, a partir de la cual se ajustó la posición del exutorio al eje principal de concentración fluvial.
+
+
+
+
+
+
+
+
+
+% ============================== 5. CARACTERIZACIÓN MORFOMÉTRICA ==============================
+\section{Caracterización Morfométrica de la Cuenca}
+
+\subsection{Área, Perímetro y Longitud Axial}
+A partir del análisis espacial de la cuenca delimitada se calcularon los parámetros geométricos, morfométricos y de relieve resumidos en el Cuadro~\ref{tab:morfometria}.
+
+\begin{table}[H]
+\centering
+\caption{Parámetros morfométricos y de relieve de la cuenca.}
+\label{tab:morfometria}
+\begin{tabular}{p{8.5cm}r}\toprule
+\textbf{Parámetro Morfométrico} & \textbf{Valor Obtenido} \\\midrule
+Área de la Cuenca ($A$) & \textbf{610.22 km$^2$} \\
+Perímetro de la Cuenca ($P$) & \textbf{202.94 km} \\
+Longitud Axial ($L_a$) & 31.27 km \\
+Factor de Forma de Horton ($K_f$) & 0.624 \\
+Coeficiente de Compacidad de Gravelius ($K_c$) & 2.317 \\
+Relación de Circularidad de Miller ($R_c$) & 0.186 \\
+Densidad de Drenaje ($D_d$) & 104.124 km/km$^2$ \\
+Orden Máximo de Corrientes (Strahler) & 9 \\
+Número de Subcuencas Identificadas & 194 \\
+Elevación Mínima (Exutorio) & 72.23 msnm \\
+Elevación Máxima (Cabecera) & 945.09 msnm \\
+Elevación Media de la Cuenca & 132.88 msnm \\
+Relieve Total de la Cuenca ($H_T$) & 872.85 m \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Factor de Forma de Horton ($K_f$)}
+El factor de forma expresa la relación entre el área de la cuenca y el cuadrado de su longitud máxima axial ($L_a$):
+\begin{equation}
+K_f = \frac{A}{L_a^2}
+\end{equation}
+Donde $A$ es el área en km$^2$ y $L_a$ es la longitud axial en km. Para la cuenca evaluada se obtuvo un valor de $K_f = 0.624$, clasificándose como una cuenca \textit{alargada}, lo cual indica una baja susceptibilidad a crecientes súbitas simultáneas.
+
+\subsection{Índice de Compacidad de Gravelius ($K_c$)}
+El índice de compacidad relaciona el perímetro de la cuenca con el perímetro de un círculo de igual superficie:
+\begin{equation}
+K_c = 0.282 \frac{P}{\sqrt{A}}
+\end{equation}
+Donde $P$ es el perímetro en km y $A$ el área en km$^2$. Un valor de $K_c = 1.0$ corresponde a una cuenca perfectamente circular. El valor obtenido de $K_c = 2.317$ confirma una morfología que favorece la disipación temporal de caudales.
+
+\subsection{Relación de Circularidad de Miller ($R_c$)}
+La relación de circularidad compara el área de la cuenca con el área de un círculo que posee el mismo perímetro:
+\begin{equation}
+R_c = \frac{4 \pi A}{P^2}
+\end{equation}
+El valor obtenido de $R_c = 0.186$ corrobora el comportamiento alargado y la moderada respuesta hidrológica del drenaje ante eventos torrenciales.
+
+\subsection{Densidad de Drenaje ($D_d$)}
+La densidad de drenaje relaciona la longitud total de corrientes fluviales con el área total de la cuenca:
+\begin{equation}
+D_d = \frac{\sum L_i}{A} = 104.124 \text{ km/km}^2
+\end{equation}
+Este valor refleja la capacidad de evacuación de caudales superficiales y el grado de desarrollo de la red hídrica.
+
+\subsection{Relieve y Elevaciones}
+El análisis altimétrico revela una elevación mínima en el exutorio de \textbf{72.23 msnm}, una cota máxima en cabecera de \textbf{945.09 msnm}, y una elevación media ponderada de \textbf{132.88 msnm}, representando un relieve total de $H_T = 872.85$ m.
+
+\subsection{Orden de Strahler}
+La jerarquización fluvial se realizó bajo la metodología topológica de Strahler, alcanzando un orden máximo de corriente igual a \textbf{9}. En la Figura~\ref{fig:strahler} se representa la clasificación espacial de corrientes.
+
+
+
+\subsection{Subcuencas y Red de Drenaje}
+A partir de los puntos de confluencia y umbrales de acumulación se subdividió la cuenca en \textbf{194} subcuencas tributarias. En las Figuras~\ref{fig:watershed_drenaje} y~\ref{fig:subcuencas} y en el Cuadro~\ref{tab:subcuencas} se detalla la partición territorial.
+
+
+
+
+
+\begin{table}[H]
+\centering
+\caption{Distribución de áreas por subcuencas hidrológicas principales.}
+\label{tab:subcuencas}
+\begin{tabular}{rrr}\toprule
+\textbf{ID Subcuenca} & \textbf{Área (km$^2$)} & \textbf{\% Área Total} \\\midrule
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Cauce Principal y Perfil Longitudinal}
+En el Cuadro~\ref{tab:cauce} se resumen las características geométricas y altimétricas del cauce principal, complementadas con su perfil longitudinal en la Figura~\ref{fig:perfil}.
+
+\begin{table}[H]
+\centering
+\caption{Características geométricas y altimétricas del cauce principal.}
+\label{tab:cauce}
+\begin{tabular}{p{8.5cm}r}\toprule
+\textbf{Parámetro del Cauce} & \textbf{Valor} \\\midrule
+Longitud del Cauce Principal ($L$) & \textbf{46.33 km} \\
+Elevación en Cabecera & 766.92 msnm \\
+Elevación en Exutorio & 72.23 msnm \\
+Desnivel Topográfico ($\Delta H$) & 694.69 m \\
+Pendiente Media del Cauce ($S$) & 1.499\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\subsection{Cartografía Morfométrica Complementaria}
+La cartografía generada constituye la base geométrica para la formulación de los modelos de escorrentía superficial, delimitación de zonas de recarga y dimensionamiento de la red de colectores e infraestructuras de paso.
+
+% ============================== 6. CARACTERIZACIÓN HIDROLÓGICA ==============================
+\section{Caracterización Hidrológica}
+
+\subsection{Estaciones IDEAM}
+Para la caracterización hidrometeorológica del área de estudio se consultó el Catálogo Nacional de Estaciones del IDEAM (DHIME). En el Cuadro~\ref{tab:estaciones_ideam} y en la Figura~\ref{fig:estaciones} se presentan las estaciones seleccionadas en el área de influencia del proyecto.
+
+\begin{table}[H]
+\centering
+\caption{Estaciones meteorológicas oficiales del IDEAM identificadas en el área de influencia.}
+\label{tab:estaciones_ideam}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llllrrrr}\toprule
+\textbf{Código} & \textbf{Nombre} & \textbf{Categoría} & \textbf{Altitud} & \textbf{Latitud} & \textbf{Longitud} & \textbf{Municipio} & \textbf{Dist.} \\\midrule
+24050220 & Estación Albania & Pluviométrica & 216 m & 7.0241$^\circ$ & -73.7999$^\circ$ & Barrancabermeja & 7.1 km \\
+24050110 & Estación Putana La & Pluviométrica & 150 m & 7.1141$^\circ$ & -73.7099$^\circ$ & Betulia & 7.1 km \\
+24050330 & Hacienda Las Brisas & Climatológica Ordinaria & 185 m & 7.0041$^\circ$ & -73.6799$^\circ$ & San Vicente & 10.2 km \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\subsection{Polígonos de Thiessen}
+Con el fin de determinar la representatividad espacial de las estaciones meteorológicas sobre la cuenca hidrográfica, se trazaron los Polígonos de Thiessen (diagramas de Voronoi recortados a la divisoria). En el Cuadro~\ref{tab:thiessen} y la Figura~\ref{fig:thiessen} se detalla la distribución de áreas de influencia.
+
+\begin{table}[H]
+\centering
+\caption{Ponderación espacial de estaciones según Polígonos de Thiessen.}
+\label{tab:thiessen}
+\begin{tabular}{llrr}\toprule
+\textbf{Código} & \textbf{Estación Meteorológica} & \textbf{Área de Influencia (km$^2$)} & \textbf{\% Área Cuenca} \\\midrule
+24050220 & Estación Albania & 46.38 & 7.6\% \\
+24050110 & Estación Putana La & 127.54 & 20.9\% \\
+24050330 & Hacienda Las Brisas & 436.30 & 71.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\subsection{Curvas IDF}
+A partir de las ecuaciones regionales del IDEAM (Vargas y Díaz para Colombia) se construyeron las Curvas IDF para periodos de retorno de 2.33, 5, 10, 25, 50 y 100 años:
+\begin{equation}
+I = \frac{a \cdot T_r^b}{(d + c)^k}
+\end{equation}
+Donde $I$ es la intensidad de precipitación en mm/h y $d$ es la duración del evento en minutos. En la Figura~\ref{fig:idf} se ilustran las familias de curvas generadas.
+
+
+
+\subsection{Número de Curva SCS-CN}
+El método de la Curva Numérica del SCS cuantifica la escorrentía directa integrando el tipo de suelo (grupos hidrológicos A, B, C, D) y la cobertura vegetal (CORINE Land Cover). En el Cuadro~\ref{tab:cn} y la Figura~\ref{fig:cn} se resumen las unidades homogéneas identificadas:
+
+\begin{table}[H]
+\centering
+\caption{Cálculo del Número de Curva (CN) por unidades homogéneas de la cuenca.}
+\label{tab:cn}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llllrrr}\toprule
+\textbf{Cobertura} & \textbf{Uso SCS} & \textbf{Condición} & \textbf{Grupo} & \textbf{CN} & \textbf{Área (km$^2$)} & \textbf{CN $\times$ A} \\\midrule
+\multicolumn{7}{c}{Unidades de cobertura estándar} \\
+\midrule
+\multicolumn{5}{l}{\textbf{Número de Curva Ponderado ($CN_{promedio}$)}} & \textbf{610.22} & \textbf{74.3} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La retención potencial máxima de humedad ($S$) y la abstracción inicial ($I_a$) se obtienen como:
+\begin{equation}
+S = \frac{25400}{CN} - 254 = N/D \text{ mm}, \quad I_a = 0.2 S = N/D \text{ mm}
+\end{equation}
+
+
+
+\subsection{Tiempo de Concentración}
+En el Cuadro~\ref{tab:expresiones_tc} se presentan las expresiones matemáticas empleadas en el análisis:
+
+\begin{table}[H]
+\centering
+\caption{Expresiones matemáticas para la estimación de tiempos de concentración.}
+\label{tab:expresiones_tc}
+\begin{tabular}{p{3.2cm}p{5.0cm}p{6.8cm}}\toprule
+\textbf{Método} & \textbf{Ecuación} & \textbf{Definición de Variables} \\\midrule
+Kirpich & $T_c = 0.06628 \left(\frac{L}{S^{0.5}}\right)^{0.77}$ & $L$: km, $S$: m/m (pendiente total), $T_c$: h. \\
+Témez & $T_c = 0.30 \left(\frac{L}{S^{0.25}}\right)^{0.76}$ & $L$: km, $S$: \% (pendiente en porcentaje), $T_c$: h. \\
+Giandotti & $T_c = \frac{4\sqrt{A} + 1.5 L}{25.3 \sqrt{L \cdot S}}$ & $A$: km$^2$, $L$: km, $S$: m/m, $T_c$: h. \\
+Johnstone y Cross & $T_c = 2.6 \left(\frac{L}{S^{0.5}}\right)^{0.5}$ & $L$: km, $S$: m/km, $T_c$: h. \\
+V.T. Chow & $T_c = 0.273 \left(\frac{L}{S^{0.5}}\right)^{0.64}$ & $L$: km, $S$: m/m, $T_c$: h. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+En el Cuadro~\ref{tab:tc_resultados} se comparan los tiempos de concentración calculados por cada método:
+
+\begin{table}[H]
+\centering
+\caption{Resumen de tiempos de concentración estimados para la cuenca.}
+\label{tab:tc_resultados}
+\begin{tabular}{lrr}\toprule
+\textbf{Método Aplicado} & \textbf{$T_c$ (Horas)} & \textbf{$T_c$ (Minutos)} \\\midrule
+Kirpich & 6.40 h & 384.0 min \\
+Témez & 12.30 h & 738.0 min \\
+Giandotti & 7.98 h & 479.0 min \\
+Johnstone y Cross & 8.99 h & 539.6 min \\
+V.T. Chow & 12.19 h & 731.5 min \\
+\midrule
+\textbf{Promedio Adoptado} & \textbf{9.57 h} & \textbf{574.4 min} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Modelación Hidrológica y Caudales Máximos}
+La transformación de lluvia en escorrentía se efectuó aplicando el modelo del Hidrograma Unitario del SCS conjuntamente con el Método Racional. En el Cuadro~\ref{tab:caudales} se consolidan los caudales pico estimados para cada periodo de retorno, y en la Figura~\ref{fig:hidrogramas} se grafican los hidrogramas temporales de diseño $Q(t)$.
+
+\begin{table}[H]
+\centering
+\caption{Resumen de caudales pico obtenidos para diferentes periodos de retorno.}
+\label{tab:caudales}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrrr}\toprule
+\textbf{Periodo Retorno} & \textbf{$I_{diseno}$ (mm/h)} & \textbf{$P_{total}$ (mm)} & \textbf{$P_{efectiva}$ (mm)} & \textbf{$Q_{Racional}$ (m$^3$/s)} & \textbf{$Q_{SCS}$ (m$^3$/s)} & \textbf{$Q_{Diseno}$ (m$^3$/s)} \\\midrule
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+% ============================== 7. ANÁLISIS INTEGRADO ==============================
+\section{Análisis Integrado de Resultados}
+La integración morfométrica e hidrológica evidencia una cuenca con factor de forma $K_f = 0.624$ e índice de compacidad $K_c = 2.317$, lo que se traduce en hidrogramas con tiempos al pico moderados y respuesta hidrodinámica amortiguada. Para el periodo de retorno de diseño $T_r = 100$ años, el caudal pico estimado de \textbf{0.00 m$^3$/s} representa la condición de solicitación extrema recomendada para el diseño de obras de protección hidráulica y pasos vehiculares.
+
+% ============================== 8. CONCLUSIONES ==============================
+\section{Conclusiones y Recomendaciones}
+\begin{itemize}
+\item Se delimitó exitosamente la cuenca aportante para \textbf{Zarzal}, abarcando un área total de \textbf{610.22 km$^2$} y un perímetro de \textbf{202.94 km}.
+\item La respuesta temporal del sistema arrojó un tiempo de concentración medio adoptado de \textbf{574.4 minutos} (9.57 h), fundamentado en el análisis comparativo de cinco formulaciones hidrológicas.
+\item El Número de Curva ponderado estimado ($CN = 74.3$) representa adecuadamente las coberturas de pastos, vegetación y suelos de la cuenca.
+\item Los caudales máximos de diseño modelados para los periodos de retorno de 25, 50 y 100 años corresponden a \textbf{0.00 m$^3$/s}, \textbf{0.00 m$^3$/s} y \textbf{0.00 m$^3$/s} respectivamente.
+\item Se recomienda implementar estructuras de disipación de energía y considerar los hidrogramas generados para el análisis de tránsito de avenidas.
+\end{itemize}
+
+% ============================== 9. LIMITACIONES ==============================
+\section{Limitaciones Técnicas}
+Los resultados derivan del procesamiento topográfico de modelos de elevación satelitales y formulaciones hidrológicas sintéticas. El presente estudio no reemplaza levantamientos batimétricos directos en el cauce ni la verificación estructural en campo de las obras de paso existentes.
+
+% ============================== 10. ANEXOS IDEAM ==============================
+\newpage
+\section{Anexos IDEAM -- Registro y Tratamiento de Información Pluviométrica}
+En este anexo se consolida el registro completo de las estaciones meteorológicas del IDEAM identificadas en el entorno territorial del proyecto, junto con las metodologías técnicas adoptadas para la verificación de consistencia, homogeneización y completación de series climáticas.
+
+\subsection*{Catálogo y Variables Reales de Estaciones IDEAM}
+En el Cuadro~\ref{tab:anexo_ideam} se presentan los datos reales extraídos del Catálogo Nacional de Estaciones del IDEAM (DHIME):
+
+\begin{table}[H]
+\centering
+\caption{Registro oficial de estaciones meteorológicas del IDEAM consultadas por HydroBasin.}
+\label{tab:anexo_ideam}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lllcccccr}\toprule
+\textbf{Código} & \textbf{Nombre} & \textbf{Categoría} & \textbf{Altitud} & \textbf{Latitud} & \textbf{Longitud} & \textbf{Municipio} & \textbf{Distancia} & \textbf{Estado} \\\midrule
+24050220 & Estación Albania & Pluviométrica & 216 m & 7.0241$^\circ$ & -73.7999$^\circ$ & Barrancabermeja & 7.1 km & Activa \\
+24050110 & Estación Putana La & Pluviométrica & 150 m & 7.1141$^\circ$ & -73.7099$^\circ$ & Betulia & 7.1 km & Activa \\
+24050330 & Hacienda Las Brisas & Climatológica Ordinaria & 185 m & 7.0041$^\circ$ & -73.6799$^\circ$ & San Vicente & 10.2 km & Activa \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{Metodología de Completación y Homogeneización de Datos}
+Para el tratamiento de vacíos de información o registros faltantes en las series pluviométricas se aplican los criterios técnicos estandarizados por el IDEAM y la Organización Meteorológica Mundial (OMM No. 168):
+
+\begin{enumerate}
+\item \textbf{Método de Proporciones Normales (Normal Ratio Method):} Aplicado cuando la precipitación media anual de las estaciones vecinas difiere en más de un 10\% respecto a la estación de interés:
+\begin{equation}
+P_x = \frac{1}{n} \sum_{i=1}^{n} \left( \frac{N_x}{N_i} \right) P_i
+\end{equation}
+Donde $P_x$ es la precipitación estimada para la estación faltante, $N_x$ es su precipitación media anual normal, $N_i$ es la precipitación media anual de la estación vecina $i$, y $P_i$ es la precipitación observada en el periodo correspondiente.
+
+\item \textbf{Regresión Lineal y Correlación Cruzada:} Utilizada para estaciones con coeficientes de correlación $R^2 \ge 0.75$ y regímenes pluviométricos climatológicamente análogos.
+
+\item \textbf{Interpolación Espacial por Distancia Inversa Ponderada (IDW):} Empleada para construir campos continuos de precipitación a partir de la red pluviométrica circundante:
+\begin{equation}
+P(x, y) = \frac{\sum_{i=1}^{n} \frac{P_i}{d_i^p}}{\sum_{i=1}^{n} \frac{1}{d_i^p}}
+\end{equation}
+Donde $d_i$ es la distancia geodésica a la estación $i$ y $p=2$ es el exponente de ponderación adoptado.
+\end{enumerate}
+
+\end{document}

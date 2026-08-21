@@ -1,0 +1,85 @@
+codigo_corine,descripcion_corine,uso_scs,condicion_hidrologica
+1,Territorios artificializados,Residencial alta densidad,Pobre
+11,Zonas urbanizadas,Residencial alta densidad,Pobre
+111,Tejido urbano continuo,Residencial alta densidad,Pobre
+112,Tejido urbano discontinuo,Residencial baja densidad,Regular
+12,Zonas industriales o comerciales y redes de comunicacion,Industrial o Comercial,Pobre
+121,Zonas industriales o comerciales,Industrial o Comercial,Pobre
+122,Red vial ferroviaria y terrenos asociados,Vias y carreteras pavimentadas,Pobre
+123,Zonas portuarias,Zonas portuarias e industriales,Pobre
+124,Aeropuertos,Aeropuertos e instalaciones,Pobre
+125,Obras hidraulicas,Instalaciones de infraestructura,Pobre
+13,Zonas de extraccion minera y escombreras,Canteras y suelo desnudo,Pobre
+131,Zonas de extraccion minera,Canteras y explotacion a cielo abierto,Pobre
+132,Zona de disposicion de residuos,Suelo descubierto y relleno,Pobre
+14,Zonas verdes urbanas y de recreacion,Parques y areas recreativas,Buena
+141,Zonas verdes urbanas,Parques y jardines urbanos,Buena
+142,Instalaciones recreativas,Campos deportivos y recreativos,Buena
+2,Territorios agricolas,Mosaico agropecuario y pastos,Regular
+21,Cultivos transitorios,Cultivos en hileras,Regular
+211,Otros cultivos transitorios,Cultivos en hileras,Regular
+212,Cereales,Cultivos en hileras,Regular
+213,Oleaginosas y leguminosas,Cultivos en hileras,Regular
+214,Hortalizas,Cultivos en hileras,Regular
+215,Tuberculos,Cultivos en hileras,Regular
+22,Cultivos permanentes,Cultivos permanentes,Buena
+221,Cultivos permanentes herbaceos,Cultivos permanentes,Buena
+222,Cultivos permanentes arbustivos,Cultivos permanentes,Buena
+223,Cultivos permanentes arboreos,Cultivos permanentes,Buena
+224,Cultivos agroforestales,Agroforestal,Buena
+225,Cultivos confinados,Cultivos en invernadero,Regular
+23,Pastizales,Pastos,Buena
+231,Pastos limpios,Pastos limpios,Buena
+232,Pastos arbolados,Pastos con arboles,Buena
+233,Pastos enmalezados,Pastos enmalezados,Regular
+24,Areas agricolas heterogeneas,Mosaico de pastos y cultivos,Regular
+241,Mosaico de cultivos,Mosaico de cultivos,Regular
+242,Mosaico de pastos y cultivos,Mosaico de pastos y cultivos,Regular
+243,Mosaico de cultivos pastos y espacios naturales,Mosaico agropecuario y natural,Buena
+244,Mosaico de pastos con espacios naturales,Mosaico de pastos y vegetacion natural,Buena
+245,Mosaico de cultivos con espacios naturales,Mosaico de cultivos y vegetacion natural,Buena
+3,Bosques y areas seminaturales,Bosque denso,Buena
+31,Bosques,Bosque denso,Buena
+311,Bosque denso,Bosque denso,Buena
+3111,Bosque denso alto,Bosque denso,Buena
+3112,Bosque denso bajo,Bosque denso,Buena
+312,Bosque abierto,Bosque abierto,Buena
+3121,Bosque abierto alto,Bosque abierto,Buena
+3122,Bosque abierto bajo,Bosque abierto,Buena
+313,Bosque fragmentado,Bosque fragmentado,Regular
+314,Bosque de galeria y ripario,Bosque de galeria,Buena
+315,Plantacion forestal,Plantacion forestal,Buena
+32,Areas con vegetacion herbacea y arbustiva,Matorral y arbustal,Buena
+321,Herbazal,Herbazal natural,Buena
+3211,Herbazal denso,Herbazal natural,Buena
+3212,Herbazal abierto,Herbazal natural,Regular
+322,Arbustal,Matorral y arbustal,Buena
+3221,Arbustal abierto,Matorral abierto,Regular
+3222,Arbustal denso,Matorral denso,Buena
+323,Vegetacion secundaria o en transicion,Vegetacion secundaria,Buena
+3231,Vegetacion secundaria alta,Vegetacion secundaria alta,Buena
+3232,Vegetacion secundaria baja,Vegetacion secundaria baja,Regular
+33,Areas abiertas sin o con poca vegetacion,Suelo desnudo y rocas,Pobre
+331,Zonas arenosas naturales,Playas y arenales,Buena
+332,Afloramientos rocosos,Afloramientos rocosos,Pobre
+333,Tierras desnudas y degradadas,Tierras desnudas y erosionadas,Pobre
+334,Zonas quemadas,Tierras quemadas,Pobre
+335,Zonas glaciares y nivales,Nieve y glaciares,Pobre
+4,Areas humedas,Humedales y zonas pantanosas,Buena
+41,Areas humedas continentales,Humedales y zonas pantanosas,Buena
+411,Zonas pantanosas,Humedales y zonas pantanosas,Buena
+412,Turberas,Turberas,Buena
+413,Vegetacion acuatica sobre cuerpos de agua,Humedales con vegetacion,Buena
+42,Areas humedas costeras,Humedales costeros y manglares,Buena
+421,Pantanos costeros,Humedales costeros y manglares,Buena
+422,Salitrales,Salitrales y marismas,Pobre
+423,Sedimentos expuestos en bajamar,Playas y sedimentos intermareales,Buena
+5,Superficies de agua,Cuerpos de agua,Pobre
+51,Aguas continentales,Cuerpos de agua,Pobre
+511,Rios,Cuerpos de agua,Pobre
+512,Lagunas lagos y cienagas naturales,Cuerpos de agua,Pobre
+513,Canales,Cuerpos de agua,Pobre
+514,Cuerpos de agua artificiales,Cuerpos de agua,Pobre
+52,Aguas maritimas,Cuerpos de agua marina,Pobre
+521,Lagunas costeras,Cuerpos de agua,Pobre
+522,Mares y oceanos,Cuerpos de agua,Pobre

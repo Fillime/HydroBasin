@@ -7,9 +7,10 @@ from fastapi.responses import FileResponse
 
 from app.core.config import settings
 
-router = APIRouter(prefix="/analysis", tags=["analysis"])
+router = APIRouter(tags=["analysis"])
 
 
+@router.get("/analysis/jobs/{job_id}/artifact/{artifact_path:path}")
 @router.get("/jobs/{job_id}/artifact/{artifact_path:path}")
 def download_artifact(job_id: str, artifact_path: str):
     if not job_id.isalnum():

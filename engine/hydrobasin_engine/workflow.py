@@ -8,7 +8,7 @@ import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 
-from .curve_number import compute_curve_number
+from .curve_number import compute_curve_number, compute_spatial_curve_number
 from .dem import cargar_y_corregir_dem, metadatos_dem, umbral_celdas_desde_area
 from .delineation import ajustar_punto_salida, delimitar_cuenca, transformar_punto
 from .hydrology import acumulacion_flujo, direccion_flujo, orden_strahler
@@ -282,13 +282,26 @@ def run_watershed_analysis(
     idf_data, idf_fig = compute_idf_curves(tc_avg_min, station_name=base_station_name, output_fig_path=idf_fig_path)
     summary["idf_curves"] = idf_data
 
-    # 4. Número de Curva SCS (CN)
-    report("info", "Estimando Número de Curva SCS (CN) y matriz de coberturas…", 93)
-    cn_fig_path = fig_dir / "11_distribucion_cn.png"
+    # 4. Número de Curva SCS (CN) con consulta oficial IDEAM CORINE 2018 y SGC Geología 2023
+    report("info", "Consultando CORINE 2018 (IDEAM) y Geología (SGC) para Número de Curva SCS-CN…", 93)
     total_area_km2 = float(summary.get("area_km2") or 1.0)
-    cn_data, cn_fig = compute_curve_number(total_area_km2, output_fig_path=cn_fig_path)
+    cn_figs: dict[str, str] = {}
+    try:
+        cn_data, cn_figs = compute_spatial_curve_number(
+            watershed,
+            output_dir,
+            figures_dir=fig_dir,
+            tolerance_unclassified_pct=0.1,
+        )
+    except Exception as exc:
+        report("warning", f"Aviso al consultar fuentes de CN: {exc}. Evaluando datos disponibles…", 93)
+        cn_data, fallback_fig = compute_curve_number(total_area_km2, output_fig_path=fig_dir / "10_distribucion_cn.png")
+        if fallback_fig:
+            cn_figs["curve_number"] = "figuras/10_distribucion_cn.png"
+
     summary["curve_number"] = cn_data
-    summary["cn_weighted"] = cn_data["cn_weighted"]
+    summary["cn_weighted"] = cn_data.get("cn_weighted")
+    summary["cn_units"] = cn_data.get("units", [])
 
     # 5. Modelación de Caudales Máximos y Hietogramas de Diseño
     report("info", "Modelando hidrogramas y caudales máximos de diseño por Tr…", 94)
@@ -296,7 +309,7 @@ def run_watershed_analysis(
     peak_flows, hydro_fig = compute_peak_discharges(
         total_area_km2,
         tc_avg_h,
-        cn_data["cn_weighted"],
+        summary["cn_weighted"],
         idf_data["design_intensities_mm_h"],
         output_fig_path=hydro_fig_path,
     )
@@ -327,8 +340,7 @@ def run_watershed_analysis(
         figures["thiessen_map"] = "figuras/09_poligonos_thiessen.png"
     if idf_fig:
         figures["idf_curves"] = "figuras/10_curvas_idf.png"
-    if cn_fig:
-        figures["curve_number"] = "figuras/11_distribucion_cn.png"
+    figures.update(cn_figs)
     if hydro_fig:
         figures["hydrographs"] = "figuras/12_hidrogramas_diseno.png"
 

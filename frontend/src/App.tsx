@@ -81,7 +81,20 @@ type Summary = {
   tc_temez_h?: number
   tc_promedio_h?: number
   cn_weighted?: number
-  curve_number?: { cn_weighted?: number; s_retention_mm?: number; ia_abstraction_mm?: number; units?: any[] }
+  curve_number?: {
+    status?: string
+    cn_weighted?: number | null
+    s_retention_mm?: number | null
+    ia_abstraction_mm?: number | null
+    total_area_km2?: number
+    classified_area_km2?: number
+    unclassified_area_km2?: number
+    classified_percentage?: number
+    unclassified_percentage?: number
+    homogeneous_units_count?: number
+    units?: any[]
+    table_versions?: Record<string, string>
+  }
   peak_discharges?: Array<{
     tr_anos: number
     intensidad_mm_h: number
@@ -221,11 +234,37 @@ export default function App() {
   const [watershedGeoJson, setWatershedGeoJson] = useState<GeoJsonData>(null)
   const [drainageGeoJson, setDrainageGeoJson] = useState<GeoJsonData>(null)
   const [subbasinsGeoJson, setSubbasinsGeoJson] = useState<GeoJsonData>(null)
+  const [cnGeoJson, setCnGeoJson] = useState<GeoJsonData>(null)
+  const [corineGeoJson, setCorineGeoJson] = useState<GeoJsonData>(null)
+  const [geologyGeoJson, setGeologyGeoJson] = useState<GeoJsonData>(null)
   const [jobId, setJobId] = useState('')
   const [error, setError] = useState('')
   const [activeStep, setActiveStep] = useState(0)
   const [lastCalculatedOutlet, setLastCalculatedOutlet] = useState<Outlet | null>(null)
   const [reprocessMenuOpen, setReprocessMenuOpen] = useState(false)
+
+  const loadCnGeoJsons = async (targetJobId: string) => {
+    if (!targetJobId) return
+    try {
+      const resCn = await fetch(`/api/analysis/jobs/${targetJobId}/artifact/unidades_homogeneas_cn.geojson`)
+      if (resCn.ok) {
+        const data = await resCn.json()
+        setCnGeoJson(data)
+      }
+      const resCorine = await fetch(`/api/analysis/jobs/${targetJobId}/artifact/coberturas_corine.geojson`)
+      if (resCorine.ok) {
+        const data = await resCorine.json()
+        setCorineGeoJson(data)
+      }
+      const resGeol = await fetch(`/api/analysis/jobs/${targetJobId}/artifact/grupos_hidrologicos.geojson`)
+      if (resGeol.ok) {
+        const data = await resGeol.json()
+        setGeologyGeoJson(data)
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   const isOutletChanged = useMemo(() => {
     if (!lastCalculatedOutlet) return false
@@ -284,6 +323,9 @@ export default function App() {
     setWatershedGeoJson(null)
     setDrainageGeoJson(null)
     setSubbasinsGeoJson(null)
+    setCnGeoJson(null)
+    setCorineGeoJson(null)
+    setGeologyGeoJson(null)
     setJobId('')
   }
 
@@ -378,6 +420,9 @@ export default function App() {
     setDrainageGeoJson(p.drainageGeoJson || null)
     setSubbasinsGeoJson(p.subbasinsGeoJson || null)
     setJobId(p.jobId || '')
+    if (p.jobId) {
+      void loadCnGeoJsons(p.jobId)
+    }
     setActiveStep(p.activeStep ?? 0)
     setAoiBounds(p.aoiBounds || null)
     setSelectedDemSource(p.selectedDemSource || 'COP30')
@@ -839,6 +884,9 @@ export default function App() {
             setDrainageGeoJson(item.drainage_geojson ?? null)
             setSubbasinsGeoJson(item.subbasins_geojson ?? null)
             setJobId(item.job_id ?? '')
+            if (item.job_id) {
+              void loadCnGeoJsons(item.job_id)
+            }
           }
         }
         if (done) break
@@ -953,6 +1001,10 @@ export default function App() {
             if (item.watershed_geojson) setWatershedGeoJson(item.watershed_geojson)
             if (item.drainage_geojson) setDrainageGeoJson(item.drainage_geojson)
             if (item.subbasins_geojson) setSubbasinsGeoJson(item.subbasins_geojson)
+            const targetJId = item.job_id || jobId
+            if (targetJId) {
+              void loadCnGeoJsons(targetJId)
+            }
           }
         }
         if (done) break
@@ -1273,6 +1325,21 @@ export default function App() {
             </div>
           </div>
 
+          {/* Trazabilidad Oficial CN II */}
+          {summary.curve_number && (
+            <div style={{ marginTop: '0.6rem', padding: '0.5rem 0.75rem', background: '#f0fdfa', border: '1px solid #ccfbf1', borderRadius: '6px', fontSize: '0.75rem', color: '#0f766e' }}>
+              <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                Número de Curva SCS (CN II = {summary.curve_number.cn_weighted ? summary.curve_number.cn_weighted.toFixed(2) : (summary.cn_weighted?.toFixed(2) ?? '—')})
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', fontSize: '0.7rem', color: '#115e59' }}>
+                <span>• CORINE: IDEAM 2018</span>
+                <span>• Geología: SGC 2023</span>
+                <span>• Cobertura: {summary.curve_number.classified_percentage ?? 100}% clasificada</span>
+                <span>• {summary.curve_number.homogeneous_units_count ?? summary.curve_number.units?.length ?? 0} unidades</span>
+              </div>
+            </div>
+          )}
+
           {/* Tabla de Caudales de Diseño por Periodo de Retorno */}
           {summary.peak_discharges && summary.peak_discharges.length > 0 && (
             <div className="peak-flows-container">
@@ -1369,10 +1436,18 @@ export default function App() {
             <button
               type="button"
               className="secondary-button wide"
-              onClick={() => downloadArtifact('estaciones_ideam.xlsx')}
-              title="Descargar registro completo de estaciones IDEAM, Thiessen, IDF, caudales y series en Excel (.xlsx)"
+              onClick={() => downloadArtifact('resultados_hidrologicos.xlsx')}
+              title="Descargar libro de cálculo completo con Unidades CN SCS, Estaciones IDEAM, Thiessen, IDF, Caudales y Series en Excel (.xlsx)"
             >
-              <FileSpreadsheet size={14} /> Estaciones y Caudales (Excel .xlsx)
+              <FileSpreadsheet size={14} /> Resultados Hidrológicos (Excel .xlsx)
+            </button>
+            <button
+              type="button"
+              className="secondary-button wide"
+              onClick={() => downloadArtifact('gis/cn_analysis.gpkg')}
+              title="Descargar GeoPackage interno con coberturas CORINE, grupos hidrológicos y unidades CN (.gpkg)"
+            >
+              <Layers size={14} /> Análisis CN GeoPackage (.gpkg)
             </button>
             <button
               type="button"
@@ -1700,6 +1775,9 @@ export default function App() {
             watershedGeoJson={watershedGeoJson}
             drainageGeoJson={drainageGeoJson}
             subbasinsGeoJson={subbasinsGeoJson}
+            cnGeoJson={cnGeoJson}
+            corineGeoJson={corineGeoJson}
+            geologyGeoJson={geologyGeoJson}
             layerStyles={layerStyles}
             onBasemapChange={(basemap) => setLayerStyles((prev) => ({ ...prev, basemap }))}
             selectingArea={startMode === 'area' && selectingDemArea}

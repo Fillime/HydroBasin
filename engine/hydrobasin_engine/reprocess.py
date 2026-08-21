@@ -10,7 +10,7 @@ import rasterio
 from pysheds.grid import Grid
 from rasterio.enums import Resampling
 
-from .curve_number import compute_curve_number
+from .curve_number import compute_curve_number, compute_spatial_curve_number
 from .delineation import ajustar_punto_salida, delimitar_cuenca, transformar_punto
 from .dem import metadatos_dem, umbral_celdas_desde_area
 from .hydrologic_modeling import compute_peak_discharges
@@ -230,21 +230,33 @@ def reprocess_stage(
         if idf_fig:
             figures["idf_curves"] = "figuras/10_curvas_idf.png"
 
-        report("info", "Recalculando Número de Curva SCS (CN)…", 75)
-        cn_fig_path = fig_dir / "11_distribucion_cn.png"
+        report("info", "Consultando CORINE 2018 (IDEAM) y Geología (SGC) para Número de Curva SCS-CN…", 75)
         total_area = float(summary.get("area_km2") or 1.0)
-        cn_data, cn_fig = compute_curve_number(total_area, output_fig_path=cn_fig_path)
+        cn_figs: dict[str, str] = {}
+        try:
+            cn_data, cn_figs = compute_spatial_curve_number(
+                watershed,
+                results_dir,
+                figures_dir=fig_dir,
+                tolerance_unclassified_pct=0.1,
+            )
+        except Exception as exc:
+            report("warning", f"Aviso al consultar fuentes de CN: {exc}. Evaluando datos disponibles…", 75)
+            cn_data, fallback_fig = compute_curve_number(total_area, output_fig_path=fig_dir / "10_distribucion_cn.png")
+            if fallback_fig:
+                cn_figs["curve_number"] = "figuras/10_distribucion_cn.png"
+
         summary["curve_number"] = cn_data
-        summary["cn_weighted"] = cn_data["cn_weighted"]
-        if cn_fig:
-            figures["curve_number"] = "figuras/11_distribucion_cn.png"
+        summary["cn_weighted"] = cn_data.get("cn_weighted")
+        summary["cn_units"] = cn_data.get("units", [])
+        figures.update(cn_figs)
 
         report("info", "Modelando caudales máximos de diseño por Tr…", 85)
         hydro_fig_path = fig_dir / "12_hidrogramas_diseno.png"
         peak_flows, hydro_fig = compute_peak_discharges(
             total_area,
             tc_avg_h,
-            cn_data["cn_weighted"],
+            summary["cn_weighted"],
             idf_data["design_intensities_mm_h"],
             output_fig_path=hydro_fig_path,
         )

@@ -1,0 +1,213 @@
+uso_scs,condicion_hidrologica,grupo_hidrologico,cn_ii
+Residencial alta densidad,Pobre,A,77
+Residencial alta densidad,Pobre,B,85
+Residencial alta densidad,Pobre,C,90
+Residencial alta densidad,Pobre,D,92
+Residencial baja densidad,Regular,A,54
+Residencial baja densidad,Regular,B,70
+Residencial baja densidad,Regular,C,80
+Residencial baja densidad,Regular,D,85
+Industrial o Comercial,Pobre,A,81
+Industrial o Comercial,Pobre,B,88
+Industrial o Comercial,Pobre,C,91
+Industrial o Comercial,Pobre,D,93
+Vias y carreteras pavimentadas,Pobre,A,98
+Vias y carreteras pavimentadas,Pobre,B,98
+Vias y carreteras pavimentadas,Pobre,C,98
+Vias y carreteras pavimentadas,Pobre,D,98
+Zonas portuarias e industriales,Pobre,A,81
+Zonas portuarias e industriales,Pobre,B,88
+Zonas portuarias e industriales,Pobre,C,91
+Zonas portuarias e industriales,Pobre,D,93
+Aeropuertos e instalaciones,Pobre,A,76
+Aeropuertos e instalaciones,Pobre,B,85
+Aeropuertos e instalaciones,Pobre,C,89
+Aeropuertos e instalaciones,Pobre,D,91
+Instalaciones de infraestructura,Pobre,A,76
+Instalaciones de infraestructura,Pobre,B,85
+Instalaciones de infraestructura,Pobre,C,89
+Instalaciones de infraestructura,Pobre,D,91
+Canteras y suelo desnudo,Pobre,A,77
+Canteras y suelo desnudo,Pobre,B,86
+Canteras y suelo desnudo,Pobre,C,91
+Canteras y suelo desnudo,Pobre,D,94
+Canteras y explotacion a cielo abierto,Pobre,A,77
+Canteras y explotacion a cielo abierto,Pobre,B,86
+Canteras y explotacion a cielo abierto,Pobre,C,91
+Canteras y explotacion a cielo abierto,Pobre,D,94
+Suelo descubierto y relleno,Pobre,A,77
+Suelo descubierto y relleno,Pobre,B,86
+Suelo descubierto y relleno,Pobre,C,91
+Suelo descubierto y relleno,Pobre,D,94
+Parques y areas recreativas,Buena,A,39
+Parques y areas recreativas,Buena,B,61
+Parques y areas recreativas,Buena,C,74
+Parques y areas recreativas,Buena,D,80
+Parques y jardines urbanos,Buena,A,39
+Parques y jardines urbanos,Buena,B,61
+Parques y jardines urbanos,Buena,C,74
+Parques y jardines urbanos,Buena,D,80
+Campos deportivos y recreativos,Buena,A,39
+Campos deportivos y recreativos,Buena,B,61
+Campos deportivos y recreativos,Buena,C,74
+Campos deportivos y recreativos,Buena,D,80
+Mosaico agropecuario y pastos,Regular,A,49
+Mosaico agropecuario y pastos,Regular,B,69
+Mosaico agropecuario y pastos,Regular,C,79
+Mosaico agropecuario y pastos,Regular,D,84
+Cultivos en hileras,Regular,A,67
+Cultivos en hileras,Regular,B,76
+Cultivos en hileras,Regular,C,83
+Cultivos en hileras,Regular,D,86
+Cultivos permanentes,Buena,A,45
+Cultivos permanentes,Buena,B,66
+Cultivos permanentes,Buena,C,77
+Cultivos permanentes,Buena,D,83
+Cultivos en invernadero,Regular,A,70
+Cultivos en invernadero,Regular,B,80
+Cultivos en invernadero,Regular,C,85
+Cultivos en invernadero,Regular,D,88
+Agroforestal,Buena,A,40
+Agroforestal,Buena,B,60
+Agroforestal,Buena,C,72
+Agroforestal,Buena,D,78
+Pastos,Buena,A,39
+Pastos,Buena,B,61
+Pastos,Buena,C,74
+Pastos,Buena,D,80
+Pastos limpios,Buena,A,39
+Pastos limpios,Buena,B,61
+Pastos limpios,Buena,C,74
+Pastos limpios,Buena,D,80
+Pastos con arboles,Buena,A,36
+Pastos con arboles,Buena,B,60
+Pastos con arboles,Buena,C,73
+Pastos con arboles,Buena,D,79
+Pastos enmalezados,Regular,A,49
+Pastos enmalezados,Regular,B,69
+Pastos enmalezados,Regular,C,79
+Pastos enmalezados,Regular,D,84
+Mosaico de pastos y cultivos,Regular,A,58
+Mosaico de pastos y cultivos,Regular,B,72
+Mosaico de pastos y cultivos,Regular,C,81
+Mosaico de pastos y cultivos,Regular,D,85
+Mosaico de cultivos,Regular,A,67
+Mosaico de cultivos,Regular,B,76
+Mosaico de cultivos,Regular,C,83
+Mosaico de cultivos,Regular,D,86
+Mosaico agropecuario y natural,Buena,A,43
+Mosaico agropecuario y natural,Buena,B,65
+Mosaico agropecuario y natural,Buena,C,76
+Mosaico agropecuario y natural,Buena,D,82
+Mosaico de pastos y vegetacion natural,Buena,A,38
+Mosaico de pastos y vegetacion natural,Buena,B,61
+Mosaico de pastos y vegetacion natural,Buena,C,74
+Mosaico de pastos y vegetacion natural,Buena,D,80
+Mosaico de cultivos y vegetacion natural,Buena,A,45
+Mosaico de cultivos y vegetacion natural,Buena,B,66
+Mosaico de cultivos y vegetacion natural,Buena,C,77
+Mosaico de cultivos y vegetacion natural,Buena,D,83
+Bosque denso,Buena,A,30
+Bosque denso,Buena,B,55
+Bosque denso,Buena,C,70
+Bosque denso,Buena,D,77
+Bosque abierto,Buena,A,36
+Bosque abierto,Buena,B,60
+Bosque abierto,Buena,C,73
+Bosque abierto,Buena,D,79
+Bosque fragmentado,Regular,A,43
+Bosque fragmentado,Regular,B,65
+Bosque fragmentado,Regular,C,76
+Bosque fragmentado,Regular,D,82
+Bosque de galeria,Buena,A,30
+Bosque de galeria,Buena,B,55
+Bosque de galeria,Buena,C,70
+Bosque de galeria,Buena,D,77
+Plantacion forestal,Buena,A,32
+Plantacion forestal,Buena,B,58
+Plantacion forestal,Buena,C,72
+Plantacion forestal,Buena,D,78
+Matorral y arbustal,Buena,A,35
+Matorral y arbustal,Buena,B,56
+Matorral y arbustal,Buena,C,70
+Matorral y arbustal,Buena,D,77
+Matorral abierto,Regular,A,45
+Matorral abierto,Regular,B,66
+Matorral abierto,Regular,C,77
+Matorral abierto,Regular,D,83
+Matorral denso,Buena,A,35
+Matorral denso,Buena,B,56
+Matorral denso,Buena,C,70
+Matorral denso,Buena,D,77
+Herbazal natural,Buena,A,30
+Herbazal natural,Buena,B,58
+Herbazal natural,Buena,C,71
+Herbazal natural,Buena,D,78
+Vegetacion secundaria,Buena,A,35
+Vegetacion secundaria,Buena,B,56
+Vegetacion secundaria,Buena,C,70
+Vegetacion secundaria,Buena,D,77
+Vegetacion secundaria alta,Buena,A,32
+Vegetacion secundaria alta,Buena,B,55
+Vegetacion secundaria alta,Buena,C,70
+Vegetacion secundaria alta,Buena,D,77
+Vegetacion secundaria baja,Regular,A,45
+Vegetacion secundaria baja,Regular,B,66
+Vegetacion secundaria baja,Regular,C,77
+Vegetacion secundaria baja,Regular,D,83
+Playas y arenales,Buena,A,39
+Playas y arenales,Buena,B,61
+Playas y arenales,Buena,C,74
+Playas y arenales,Buena,D,80
+Afloramientos rocosos,Pobre,A,98
+Afloramientos rocosos,Pobre,B,98
+Afloramientos rocosos,Pobre,C,98
+Afloramientos rocosos,Pobre,D,98
+Suelo desnudo y rocas,Pobre,A,77
+Suelo desnudo y rocas,Pobre,B,86
+Suelo desnudo y rocas,Pobre,C,91
+Suelo desnudo y rocas,Pobre,D,94
+Tierras desnudas y erosionadas,Pobre,A,77
+Tierras desnudas y erosionadas,Pobre,B,86
+Tierras desnudas y erosionadas,Pobre,C,91
+Tierras desnudas y erosionadas,Pobre,D,94
+Tierras quemadas,Pobre,A,77
+Tierras quemadas,Pobre,B,86
+Tierras quemadas,Pobre,C,91
+Tierras quemadas,Pobre,D,94
+Nieve y glaciares,Pobre,A,98
+Nieve y glaciares,Pobre,B,98
+Nieve y glaciares,Pobre,C,98
+Nieve y glaciares,Pobre,D,98
+Humedales y zonas pantanosas,Buena,A,100
+Humedales y zonas pantanosas,Buena,B,100
+Humedales y zonas pantanosas,Buena,C,100
+Humedales y zonas pantanosas,Buena,D,100
+Turberas,Buena,A,100
+Turberas,Buena,B,100
+Turberas,Buena,C,100
+Turberas,Buena,D,100
+Humedales con vegetacion,Buena,A,100
+Humedales con vegetacion,Buena,B,100
+Humedales con vegetacion,Buena,C,100
+Humedales con vegetacion,Buena,D,100
+Humedales costeros y manglares,Buena,A,100
+Humedales costeros y manglares,Buena,B,100
+Humedales costeros y manglares,Buena,C,100
+Humedales costeros y manglares,Buena,D,100
+Salitrales y marismas,Pobre,A,98
+Salitrales y marismas,Pobre,B,98
+Salitrales y marismas,Pobre,C,98
+Salitrales y marismas,Pobre,D,98
+Playas y sedimentos intermareales,Buena,A,39
+Playas y sedimentos intermareales,Buena,B,61
+Playas y sedimentos intermareales,Buena,C,74
+Playas y sedimentos intermareales,Buena,D,80
+Cuerpos de agua,Pobre,A,100
+Cuerpos de agua,Pobre,B,100
+Cuerpos de agua,Pobre,C,100
+Cuerpos de agua,Pobre,D,100
+Cuerpos de agua marina,Pobre,A,100
+Cuerpos de agua marina,Pobre,B,100
+Cuerpos de agua marina,Pobre,C,100
+Cuerpos de agua marina,Pobre,D,100

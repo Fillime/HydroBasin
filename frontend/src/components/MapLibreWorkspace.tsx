@@ -27,6 +27,9 @@ type Props = {
   watershedGeoJson: GeoJsonData
   drainageGeoJson: GeoJsonData
   subbasinsGeoJson: GeoJsonData
+  cnGeoJson?: GeoJsonData
+  corineGeoJson?: GeoJsonData
+  geologyGeoJson?: GeoJsonData
   layerStyles: LayerStyleConfig
   onBasemapChange?: (basemap: 'streets' | 'satellite' | 'terrain') => void
   selectingArea: boolean
@@ -126,6 +129,9 @@ export default function MapLibreWorkspace({
   watershedGeoJson,
   drainageGeoJson,
   subbasinsGeoJson,
+  cnGeoJson,
+  corineGeoJson,
+  geologyGeoJson,
   layerStyles,
   onBasemapChange,
   selectingArea,
@@ -203,8 +209,102 @@ export default function MapLibreWorkspace({
     ensureSource(map, 'hb-watershed', watershedGeoJson || EMPTY_FC)
     ensureSource(map, 'hb-subbasins', subbasinsGeoJson || EMPTY_FC)
     ensureSource(map, 'hb-drainage', drainageGeoJson || EMPTY_FC)
+    ensureSource(map, 'hb-cn', cnGeoJson || EMPTY_FC)
+    ensureSource(map, 'hb-corine', corineGeoJson || EMPTY_FC)
+    ensureSource(map, 'hb-geology', geologyGeoJson || EMPTY_FC)
     ensureSource(map, 'hb-outlet', pointGeoJson(outlet))
     ensureSource(map, 'hb-area-box', polygonFromBounds(areaBounds))
+
+    // Operational Vector Layers: 0. Coberturas CORINE 2018
+    if (!map.getLayer('hb-corine-fill')) {
+      map.addLayer({
+        id: 'hb-corine-fill',
+        type: 'fill',
+        source: 'hb-corine',
+        paint: {
+          'fill-color': [
+            'case',
+            ['has', 'codigo_corine'],
+            [
+              'match',
+              ['coalesce', ['to-number', ['get', 'codigo_corine']], 0],
+              111, '#e11d48', 112, '#f43f5e', 231, '#84cc16', 232, '#a3e635', 233, '#65a30d',
+              241, '#eab308', 242, '#facc15', 311, '#15803d', 312, '#16a34a', 313, '#22c55e',
+              322, '#14b8a6', 323, '#0d9488', 3231, '#0f766e', 3232, '#115e59', 511, '#0284c7',
+              '#10b981'
+            ],
+            '#10b981',
+          ],
+          'fill-opacity': layerStyles.corineOpacity ?? 0.55,
+        },
+      })
+    } else {
+      map.setPaintProperty('hb-corine-fill', 'fill-opacity', layerStyles.corineOpacity ?? 0.55)
+    }
+
+    // 0b. Grupos Hidrológicos HSG
+    if (!map.getLayer('hb-geology-fill')) {
+      map.addLayer({
+        id: 'hb-geology-fill',
+        type: 'fill',
+        source: 'hb-geology',
+        paint: {
+          'fill-color': [
+            'case',
+            ['has', 'grupo_hidrologico'],
+            [
+              'match',
+              ['get', 'grupo_hidrologico'],
+              'A', '#22c55e',
+              'B', '#3b82f6',
+              'C', '#f59e0b',
+              'D', '#ef4444',
+              '#94a3b8',
+            ],
+            '#94a3b8',
+          ],
+          'fill-opacity': layerStyles.geologyOpacity ?? 0.55,
+        },
+      })
+    } else {
+      map.setPaintProperty('hb-geology-fill', 'fill-opacity', layerStyles.geologyOpacity ?? 0.55)
+    }
+
+    // 0c. Unidades Homogéneas CN II
+    if (!map.getLayer('hb-cn-fill')) {
+      map.addLayer({
+        id: 'hb-cn-fill',
+        type: 'fill',
+        source: 'hb-cn',
+        paint: {
+          'fill-color': [
+            'case',
+            ['has', 'cn_ii'],
+            [
+              'interpolate',
+              ['linear'],
+              ['coalesce', ['to-number', ['get', 'cn_ii']], 60],
+              30, '#10b981',
+              55, '#38bdf8',
+              65, '#facc15',
+              75, '#fb923c',
+              85, '#f43f5e',
+              95, '#7c3aed',
+            ],
+            '#10b981',
+          ],
+          'fill-opacity': layerStyles.cnOpacity ?? 0.55,
+        },
+      })
+      map.addLayer({
+        id: 'hb-cn-line',
+        type: 'line',
+        source: 'hb-cn',
+        paint: { 'line-color': '#334155', 'line-width': 0.6, 'line-opacity': 0.5 },
+      })
+    } else {
+      map.setPaintProperty('hb-cn-fill', 'fill-opacity', layerStyles.cnOpacity ?? 0.55)
+    }
 
     // Operational Vector Layers: 1. Watershed
     if (!map.getLayer('hb-watershed-fill')) {
@@ -245,7 +345,7 @@ export default function MapLibreWorkspace({
             ['has', 'subbasin_id'],
             [
               'match',
-              ['%', ['to-number', ['get', 'subbasin_id'], 0], 6],
+              ['%', ['coalesce', ['to-number', ['get', 'subbasin_id']], 0], 6],
               0,
               '#38bdf8',
               1,
@@ -290,7 +390,7 @@ export default function MapLibreWorkspace({
             [
               'interpolate',
               ['linear'],
-              ['to-number', ['get', 'strahler'], 1],
+              ['coalesce', ['to-number', ['get', 'strahler']], 1],
               1,
               layerStyles.drainageWidth * 0.7,
               3,
@@ -351,13 +451,25 @@ export default function MapLibreWorkspace({
     visibility(['hb-watershed-fill', 'hb-watershed-line'], Boolean(layerStyles.watershedVisible))
     visibility(['hb-subbasins-fill', 'hb-subbasins-line'], Boolean(layerStyles.subbasinsVisible))
     visibility(['hb-drainage-line'], Boolean(layerStyles.drainageVisible))
+    visibility(['hb-cn-fill', 'hb-cn-line'], Boolean(layerStyles.cnVisible))
+    visibility(['hb-corine-fill'], Boolean(layerStyles.corineVisible))
+    visibility(['hb-geology-fill'], Boolean(layerStyles.geologyVisible))
     visibility(['hb-outlet-circle', 'hb-outlet-inner'], Boolean(layerStyles.outletVisible))
     visibility(['hb-area-fill', 'hb-area-line'], Boolean(areaBounds))
 
-    // 6. Terrain & Hillshade
+    // 6. Terrain & Hillshade (Separate sources to improve rendering and eliminate MapLibre warning)
     if (layerStyles.basemap === 'terrain') {
       if (!map.getSource('hb-terrain-dem')) {
         map.addSource('hb-terrain-dem', {
+          type: 'raster-dem',
+          tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+          tileSize: 256,
+          encoding: 'terrarium',
+          maxzoom: 15,
+        })
+      }
+      if (!map.getSource('hb-hillshade-dem')) {
+        map.addSource('hb-hillshade-dem', {
           type: 'raster-dem',
           tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
           tileSize: 256,
@@ -375,7 +487,7 @@ export default function MapLibreWorkspace({
         map.addLayer({
           id: 'hb-hillshade',
           type: 'hillshade',
-          source: 'hb-terrain-dem',
+          source: 'hb-hillshade-dem',
           paint: { 'hillshade-exaggeration': layerStyles.hillshadeOpacity },
         })
       } else {

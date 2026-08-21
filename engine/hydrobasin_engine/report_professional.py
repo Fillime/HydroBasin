@@ -14,6 +14,7 @@ matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 
 from .export_excel import export_ideam_and_hydrology_excel
+from .latex_to_docx import convert_latex_to_docx
 from .location import location_label, resolve_administrative_location
 from .plan_drawing import generar_plano_pdf
 from .report_docx import generar_informe_docx
@@ -137,30 +138,45 @@ def _subbasin_table_rows(subbasins, total_area: float, limit=15) -> str:
     return "\n".join(rows)
 
 
-def _report(summary: dict, figures: dict[str, str], subbasins, loc: dict) -> str:
+def _fig_path(output_dir: Path, rel_or_abs: str | None) -> str | None:
+    if not rel_or_abs:
+        return None
+    p = Path(rel_or_abs)
+    if p.is_absolute():
+        if p.exists():
+            return str(p).replace("\\", "/")
+        return None
+    if (output_dir / rel_or_abs).exists():
+        return rel_or_abs.replace("\\", "/")
+    return None
+
+
+def _report(output_dir: Path, summary: dict, figures: dict[str, str], subbasins, loc: dict) -> str:
     site = _site(summary, loc)
     admin = _admin_label(loc)
     outlet = summary.get("outlet_original") or {}
     total_area = float(summary.get("area_km2") or 1.0)
 
-    # Figuras completas
-    sat = figures.get("location_satellite")
-    dem_fig = figures.get("dem")
-    hillshade_fig = figures.get("hillshade")
-    fdir_fig = figures.get("flow_direction")
-    acc_fig = figures.get("accumulation")
-    watershed_fig = figures.get("watershed")
-    strahler_fig = figures.get("strahler")
-    subfig = figures.get("subbasins")
-    profile = figures.get("profile")
-    st_fig = figures.get("stations_map")
-    thiessen_fig = figures.get("thiessen_map")
-    idf_fig = figures.get("idf_curves")
-    cn_fig = figures.get("curve_number")
-    hydro_fig = figures.get("hydrographs")
+    # Figuras completas verificadas
+    sat = _fig_path(output_dir, figures.get("location_satellite"))
+    dem_fig = _fig_path(output_dir, figures.get("dem"))
+    hillshade_fig = _fig_path(output_dir, figures.get("hillshade"))
+    fdir_fig = _fig_path(output_dir, figures.get("flow_direction"))
+    acc_fig = _fig_path(output_dir, figures.get("accumulation"))
+    watershed_fig = _fig_path(output_dir, figures.get("watershed"))
+    strahler_fig = _fig_path(output_dir, figures.get("strahler"))
+    subfig = _fig_path(output_dir, figures.get("subbasins"))
+    profile = _fig_path(output_dir, figures.get("profile"))
+    st_fig = _fig_path(output_dir, figures.get("stations_map"))
+    thiessen_fig = _fig_path(output_dir, figures.get("thiessen_map"))
+    idf_fig = _fig_path(output_dir, figures.get("idf_curves"))
+    corine_fig = _fig_path(output_dir, figures.get("corine_landcover"))
+    hsg_fig = _fig_path(output_dir, figures.get("hydrologic_soils"))
+    cn_fig = _fig_path(output_dir, figures.get("curve_number"))
+    hydro_fig = _fig_path(output_dir, figures.get("hydrographs"))
 
     client = summary.get("client") or "Particular"
-    calc = summary.get("calculated_by") or "HydroBasin Studio"
+    calc = summary.get("calculated_by") or "Elaboración técnica"
     rev = summary.get("reviewed_by") or "Revisión Técnica"
 
     tc_k, tc_t, tc_p = (_tc_min(summary, k) for k in ("tc_kirpich_h", "tc_temez_h", "tc_promedio_h"))
@@ -177,13 +193,20 @@ def _report(summary: dict, figures: dict[str, str], subbasins, loc: dict) -> str
     tc_giandotti_h = (4.0 * math.sqrt(total_area) + 1.5 * L_km) / (25.3 * math.sqrt(L_km * S_m_m)) if (L_km * S_m_m) > 0 else (summary.get("tc_kirpich_h") or 1.0)
     tc_johnstone_h = 2.6 * math.pow(L_km / math.sqrt(S_m_km), 0.5) if S_m_km > 0 else (summary.get("tc_kirpich_h") or 1.0)
     tc_chow_h = 0.273 * math.pow(L_km / math.sqrt(S_m_m), 0.64) if S_m_m > 0 else (summary.get("tc_kirpich_h") or 1.0)
+    H_m = max(0.01, abs(desnivel))
+    tc_scs_h = 0.947 * math.pow((L_km ** 3) / H_m, 0.385) if H_m > 0 else None
+    tc_heras_h = 0.30 * math.pow(L_km / math.pow(max(S_pct, 0.0001), 0.25), 0.76)
+    tc_cuerpo_h = 0.28 * math.pow(L_km / math.pow(max(S_m_m, 0.0001), 0.25), 0.76)
 
     tc_methods = [
-        ("Kirpich", summary.get("tc_kirpich_h") or 1.0),
+        ("Kirpich California", summary.get("tc_kirpich_h") or 1.0),
         ("Témez", summary.get("tc_temez_h") or 1.0),
-        ("Giandotti", tc_giandotti_h),
         ("Johnstone y Cross", tc_johnstone_h),
+        ("Giandotti", tc_giandotti_h),
+        ("SCS", tc_scs_h),
+        ("Ventura-Heras", tc_heras_h),
         ("V.T. Chow", tc_chow_h),
+        ("Cuerpo de Ingenieros", tc_cuerpo_h),
     ]
     tc_avg_h = sum(v for _, v in tc_methods) / len(tc_methods)
     tc_avg_min = tc_avg_h * 60.0
@@ -213,12 +236,55 @@ def _report(summary: dict, figures: dict[str, str], subbasins, loc: dict) -> str
     # 3. Tabla de Unidades de Cobertura y CN
     cn_data = summary.get("curve_number") or {}
     cn_units = cn_data.get("units") or []
-    cn_rows = []
+
+    cn_grouped = {}
     for u in cn_units:
-        cn_rows.append(
-            rf"{_esc(u.get('cobertura'))} & {_esc(u.get('uso_scs'))} & {_esc(u.get('condicion'))} & {_esc(u.get('grupo_suelo'))} & {_esc(u.get('cn'))} & {_n(u.get('area_km2'))} & {_n(u.get('nc_ai'))} \\"
+        key = (
+            str(u.get("cobertura") or "N/D").strip(),
+            str(u.get("uso_scs") or "N/D").strip(),
+            str(u.get("condicion") or "N/D").strip(),
+            str(u.get("grupo_suelo") or "N/D").strip(),
+            u.get("cn"),
         )
-    cn_table_tex = "\n".join(cn_rows) if cn_rows else r"\multicolumn{7}{c}{Unidades de cobertura estándar} \\"
+        if key not in cn_grouped:
+            cn_grouped[key] = {
+                "cobertura": key[0], "uso_scs": key[1], "condicion": key[2],
+                "grupo_suelo": key[3], "cn": key[4], "area_km2": 0.0, "nc_ai": 0.0
+            }
+        cn_grouped[key]["area_km2"] += float(u.get("area_km2") or 0.0)
+        cn_grouped[key]["nc_ai"] += float(u.get("nc_ai") or 0.0)
+
+    cn_report_units = sorted(cn_grouped.values(), key=lambda x: x["area_km2"], reverse=True)
+
+    cn_rows = [
+        rf"{_esc(u.get('cobertura'))} & {_esc(u.get('uso_scs'))} & {_esc(u.get('condicion'))} & "
+        rf"{_esc(u.get('grupo_suelo'))} & {_n(u.get('cn'),0)} & {_n(u.get('area_km2'))} & {_n(u.get('nc_ai'))} \\"
+        for u in cn_report_units
+    ]
+    cn_table_tex = "\n".join(cn_rows) if cn_rows else r"\multicolumn{7}{c}{No se dispone de unidades clasificadas} \\"
+
+    landcover_seen = {}
+    for u in cn_report_units:
+        landcover_seen[(u["cobertura"], u["uso_scs"], u["condicion"])] = True
+    cn_landcover_table_tex = "\n".join(
+        rf"{_esc(cob)} & {_esc(uso)} & {_esc(cond)} \\"
+        for cob, uso, cond in sorted(landcover_seen.keys(), key=lambda x: x[0])
+    ) or r"\multicolumn{3}{c}{No se dispone de coberturas reclasificadas} \\"
+
+    geology_seen = {}
+    for u in cn_units:
+        lit = str(u.get("litologia") or "N/D").strip()
+        hsg = str(u.get("grupo_suelo") or "N/D").strip()
+        if lit != "N/D" or hsg != "N/D":
+            geology_seen[(lit, hsg)] = True
+    cn_geology_table_tex = "\n".join(
+        rf"{_esc(lit)} & {_esc(hsg)} \\"
+        for lit, hsg in sorted(geology_seen.keys(), key=lambda x: x[0])
+    ) or r"\multicolumn{2}{c}{No se dispone de unidades litológicas reclasificadas} \\"
+
+    cn_weighted_report = cn_data.get("cn_weighted")
+    if cn_weighted_report is None:
+        cn_weighted_report = summary.get("cn_weighted")
 
     # 4. Tabla de Caudales Máximos por Periodo de Retorno (Tr)
     peak_flows = summary.get("peak_discharges") or []
@@ -261,6 +327,22 @@ def _report(summary: dict, figures: dict[str, str], subbasins, loc: dict) -> str
 \usepackage{{fancyhdr}}
 \usepackage{{array}}
 \usepackage{{amsmath}}
+\usepackage{{caption}}
+
+% Espaciado compacto y consistente entre tablas/figuras y el texto
+\setlength{{\textfloatsep}}{{10pt plus 2pt minus 2pt}}
+\setlength{{\floatsep}}{{10pt plus 2pt minus 2pt}}
+\setlength{{\intextsep}}{{10pt plus 2pt minus 2pt}}
+\setlength{{\abovecaptionskip}}{{4pt}}
+\setlength{{\belowcaptionskip}}{{4pt}}
+
+% Fuente dentro del mismo flotante, con separación controlada
+\newcommand{{\fuente}}[1]{{%
+  \par\vspace{{-0.25em}}%
+  {{\raggedright\footnotesize\textit{{Fuente: #1}}\par}}%
+  \vspace{{0.65em}}%
+}}
+
 
 \geometry{{margin=2.2cm}}
 \definecolor{{hbaccent}}{{HTML}}{{1F9D8F}}
@@ -268,7 +350,7 @@ def _report(summary: dict, figures: dict[str, str], subbasins, loc: dict) -> str
 
 \pagestyle{{fancy}}
 \fancyhf{{}}
-\lhead{{HydroBasin Studio -- Estudio Hidrológico}}
+\lhead{{Estudio Hidrológico}}
 \rhead{{Informe Técnico}}
 \cfoot{{\thepage}}
 
@@ -303,7 +385,7 @@ def _report(summary: dict, figures: dict[str, str], subbasins, loc: dict) -> str
 
 \vfill
 \noindent
-{{\footnotesize Documento técnico de ingeniería hidrológica generado por HydroBasin Studio. Prohibida su alteración no autorizada.}}
+{{\footnotesize Documento técnico de ingeniería hidrológica.}}
 \end{{titlepage}}
 
 % ============================== ÍNDICES ==============================
@@ -423,33 +505,96 @@ Relieve Total de la Cuenca ($H_T$) & {_n(summary.get('relieve_cuenca_m'))} m \\
 \end{{tabular}}
 \end{{table}}
 
-\subsection{{Factor de Forma de Horton ($K_f$)}}
-El factor de forma expresa la relación entre el área de la cuenca y el cuadrado de su longitud máxima axial ($L_a$):
-\begin{{equation}}
-K_f = \frac{{A}}{{L_a^2}}
-\end{{equation}}
-Donde $A$ es el área en km$^2$ y $L_a$ es la longitud axial en km. Para la cuenca evaluada se obtuvo un valor de $K_f = {_n(summary.get('factor_forma'),3)}$, clasificándose como una cuenca \textit{{{_esc(summary.get('clasificacion_factor_forma') or 'alargada')}}}, lo cual indica una baja susceptibilidad a crecientes súbitas simultáneas.
+\subsection{{Factor de Forma}}
 
-\subsection{{Índice de Compacidad de Gravelius ($K_c$)}}
-El índice de compacidad relaciona el perímetro de la cuenca con el perímetro de un círculo de igual superficie:
-\begin{{equation}}
-K_c = 0.282 \frac{{P}}{{\sqrt{{A}}}}
-\end{{equation}}
-Donde $P$ es el perímetro en km y $A$ el área en km$^2$. Un valor de $K_c = 1.0$ corresponde a una cuenca perfectamente circular. El valor obtenido de $K_c = {_n(summary.get('coeficiente_compacidad'),3)}$ confirma una morfología que favorece la disipación temporal de caudales.
+El factor de forma expresa la relación existente entre el área de la cuenca y el cuadrado de su longitud máxima. La longitud máxima se determina siguiendo el curso de agua más largo desde la desembocadura hasta la cabecera más distante de la unidad hidrográfica.
 
-\subsection{{Relación de Circularidad de Miller ($R_c$)}}
-La relación de circularidad compara el área de la cuenca con el área de un círculo que posee el mismo perímetro:
 \begin{{equation}}
-R_c = \frac{{4 \pi A}}{{P^2}}
+K_f = \frac{{A}}{{L^2}}
 \end{{equation}}
-El valor obtenido de $R_c = {_n(summary.get('relacion_circularidad'),3)}$ corrobora el comportamiento alargado y la moderada respuesta hidrológica del drenaje ante eventos torrenciales.
 
-\subsection{{Densidad de Drenaje ($D_d$)}}
-La densidad de drenaje relaciona la longitud total de corrientes fluviales con el área total de la cuenca:
+Donde:
+
+$K_f$: Factor de forma, adimensional.
+
+$L$: Longitud máxima de la cuenca, en km.
+
+$A$: Área de la cuenca, en km$^2$.
+
+Los valores del factor de forma y la clasificación del mismo se presentan a continuación.
+
+\begin{{table}}[H]
+\centering
+\caption{{Formas de la cuenca según el valor de $K_f$.}}
+\label{{tab:kf_clasificacion}}
+\begin{{tabular}}{{ll}}\toprule
+\textbf{{$K_f$}} & \textbf{{Clasificación}} \\\midrule
+$<0.22$ & Muy alargada \\
+0.22--0.30 & Alargada \\
+0.30--0.37 & Ligeramente alargada \\
+0.37--0.45 & Ni alargada ni ensanchada \\
+0.45--0.60 & Ensanchada ligeramente \\
+0.60--0.80 & Ensanchada \\
+0.80--1.20 & Muy ensanchada \\
+$>1.20$ & Rodeando el desagüe \\
+\bottomrule
+\end{{tabular}}
+\fuente{{Adaptado de Cortolima -- Caracterización Morfométrica del río Totare.}}
+\end{{table}}
+
+Para la cuenca evaluada se obtuvo un valor de $K_f = {_n(summary.get('factor_forma'),3)}$.
+
+\subsection{{Índice de Gravelius}}
+
+Este coeficiente es la relación entre el perímetro de la cuenca y el perímetro de un círculo equivalente; se define como la razón entre el perímetro de la cuenca, que corresponde con la misma longitud de la divisoria que la encierra, y el perímetro de la circunferencia. Este coeficiente adimensional es independiente del área estudiada y tiene por definición un valor igual a 1 para cuencas imaginarias de forma exactamente circular. Los valores del coeficiente de compacidad no son inferiores a uno. Los valores más cercanos a uno indican una cuenca semejante a una circunferencia; por el contrario, entre más alejados estén de la unidad, corresponderán a cuencas alargadas.
+
+El cálculo del coeficiente de compacidad se determina por medio de la siguiente expresión:
+
 \begin{{equation}}
-D_d = \frac{{\sum L_i}}{{A}} = {_n(summary.get('densidad_drenaje_km_km2'),3)} \text{{ km/km}}^2
+K_c = 0.28 \frac{{P}}{{\sqrt{{A}}}}
 \end{{equation}}
-Este valor refleja la capacidad de evacuación de caudales superficiales y el grado de desarrollo de la red hídrica.
+
+Donde:
+
+$K_c$: Índice de compacidad, adimensional.
+
+$P$: Perímetro de la cuenca, en km.
+
+$A$: Área de drenaje de la cuenca, en km$^2$.
+
+En la siguiente tabla se presentan las categorías para la clasificación de las cuencas de acuerdo con el coeficiente de compacidad obtenido y su relación con la potencialidad a eventos torrenciales.
+
+\begin{{table}}[H]
+\centering
+\caption{{Relación entre el índice de Gravelius y la torrencialidad.}}
+\label{{tab:gravelius_clasificacion}}
+\begin{{tabular}}{{p{{3cm}}p{{5cm}}p{{7cm}}}}\toprule
+\textbf{{Valores de $K_c$}} & \textbf{{Forma}} & \textbf{{Clasificación}} \\\midrule
+1.00--1.25 & Redonda a oval redonda & Mayor susceptibilidad relativa a concentraciones rápidas del escurrimiento. \\
+1.25--1.50 & De oval redonda a oval oblonga & Presenta peligros torrenciales, aunque inferiores a la clase anterior. \\
+1.50--1.75 & De oval oblonga a rectangular oblonga & Menor riesgo relativo a avenidas torrenciales. \\
+\bottomrule
+\end{{tabular}}
+\fuente{{Adaptado de Cortolima -- Caracterización Morfométrica del río Totare.}}
+\end{{table}}
+
+Para la cuenca evaluada se obtuvo un valor de $K_c = {_n(summary.get('coeficiente_compacidad'),3)}$.
+
+\subsection{{Índice de Alargamiento}}
+
+El índice de alargamiento se obtiene por medio de la evaluación de la relación existente entre la mayor longitud de la cuenca y el mayor ancho de la misma. Con este índice, los valores mayores a uno indican cuencas alargadas.
+
+\begin{{equation}}
+I_a = \frac{{L_{{max}}}}{{A_{{max}}}}
+\end{{equation}}
+
+Donde:
+
+$L_{{max}}$: Longitud máxima de la cuenca, en km.
+
+$A_{{max}}$: Ancho máximo de la cuenca, en km.
+
+La relación del índice de alargamiento permite generar una clasificación geométrica de la cuenca. Este parámetro debe interpretarse de forma conjunta con los demás índices morfométricos, debido a su relación con la concentración temporal de los aportes superficiales.
 
 \subsection{{Relieve y Elevaciones}}
 El análisis altimétrico revela una elevación mínima en el exutorio de \textbf{{{_n(summary.get('elevacion_min_m'))} msnm}}, una cota máxima en cabecera de \textbf{{{_n(summary.get('elevacion_max_m'))} msnm}}, y una elevación media ponderada de \textbf{{{_n(summary.get('elevacion_media_m'))} msnm}}, representando un relieve total de $H_T = {_n(summary.get('relieve_cuenca_m'))}$ m.
@@ -465,6 +610,310 @@ La jerarquización fluvial se realizó bajo la metodología topológica de Strah
 \label{{fig:strahler}}
 \end{{figure}}
 ''' if strahler_fig else ''}
+
+\section{{Tiempo de Concentración}}
+
+El tiempo de concentración de la cuenca se estima a partir de diferentes métodos empíricos comúnmente utilizados en estudios hidrológicos, con el objetivo de contar con un valor representativo para la modelación hidrológica. Este parámetro corresponde al tiempo requerido para que el escurrimiento generado en el punto hidráulicamente más alejado alcance el punto de salida de la cuenca.
+
+En la siguiente tabla se presentan las expresiones matemáticas utilizadas y posteriormente se resumen los resultados obtenidos.
+
+\begin{{table}}[H]
+\centering
+\caption{{Expresiones matemáticas para tiempos de concentración.}}
+\label{{tab:expresiones_tc}}
+\resizebox{{\textwidth}}{{!}}{{%
+\begin{{tabular}}{{p{{3cm}}p{{5cm}}p{{8cm}}}}\toprule
+\textbf{{Nombre}} & \textbf{{Ecuación}} & \textbf{{Definición de variables}} \\\midrule
+Kirpich California & $T_c=0.06628\left(\frac{{L}}{{S^{{0.5}}}}\right)^{{0.77}}$ & $T_c$: tiempo de concentración, h; $L$: longitud del cauce principal, km; $S$: pendiente entre las elevaciones máxima y mínima del cauce principal, m/m. \\
+Témez & $T_c=0.30\left(\frac{{L}}{{S^{{0.25}}}}\right)^{{0.76}}$ & $T_c$: tiempo de concentración, h; $L$: longitud del cauce principal, km; $S$: pendiente total del cauce principal, \%. \\
+Johnstone y Cross & $T_c=2.6\left(\frac{{L}}{{S^{{0.5}}}}\right)^{{0.5}}$ & $T_c$: tiempo de concentración, h; $L$: longitud del cauce principal, km; $S$: pendiente total del cauce principal, m/km. \\
+Giandotti & $T_c=\frac{{4A^{{0.5}}+1.50L}}{{25.3(LS)^{{0.5}}}}$ & $T_c$: tiempo de concentración, h; $A$: área de la cuenca, km$^2$; $L$: longitud del cauce principal, km; $S$: pendiente del cauce principal, m/m. \\
+SCS & $T_c=0.947\left(\frac{{L^3}}{{H}}\right)^{{0.385}}$ & $T_c$: tiempo de concentración, h; $L$: longitud del cauce principal, km; $H$: diferencia de cotas entre puntos extremos de la corriente principal, m. \\
+Ventura--Heras & $T_c=0.30\left(\frac{{L}}{{S^{{0.25}}}}\right)^{{0.76}}$ & $T_c$: tiempo de concentración, h; $L$: longitud del cauce principal, km; $S$: pendiente total del cauce principal, \%. \\
+V.T. Chow & $T_c=0.273\left(\frac{{L}}{{S^{{0.5}}}}\right)^{{0.64}}$ & $T_c$: tiempo de concentración, h; $L$: longitud del cauce principal, km; $S$: pendiente total del cauce principal, m/m. \\
+Cuerpo de Ingenieros & $T_c=0.28\left(\frac{{L}}{{S^{{0.25}}}}\right)^{{0.76}}$ & $T_c$: tiempo de concentración, h; $L$: longitud del cauce principal, km; $S$: pendiente total del cauce principal, m/m. \\
+\bottomrule
+\end{{tabular}}%
+}}
+\fuente{{Elaboración propia a partir de formulaciones empíricas de uso común en estudios hidrológicos.}}
+\end{{table}}
+
+\begin{{table}}[H]
+\centering
+\caption{{Tiempos de concentración estimados para la cuenca.}}
+\label{{tab:tc_resultados}}
+\begin{{tabular}}{{lrr}}\toprule
+\textbf{{Método}} & \textbf{{$T_c$ (h)}} & \textbf{{$T_c$ (min)}} \\\midrule
+{tc_rows}
+\midrule
+\textbf{{Promedio}} & \textbf{{{_n(tc_avg_h,2)}}} & \textbf{{{_n(tc_avg_min,1)}}} \\
+\bottomrule
+\end{{tabular}}
+\fuente{{Elaboración propia.}}
+\end{{table}}
+
+\section{{Caracterización Hidrológica de la Cuenca}}
+
+\subsection{{Método para la estimación de las pérdidas mediante la Curva Numérica del SCS}}
+
+El método de la Curva Numérica del Servicio de Conservación de Suelos (SCS) es un procedimiento hidrológico empírico ampliamente utilizado para estimar la escorrentía directa generada por eventos de lluvia en una cuenca hidrográfica. Este método integra las principales características físicas de la cuenca que influyen en el proceso de escorrentía, tales como el tipo hidrológico de suelo, el uso y cobertura del suelo, el manejo del terreno y la condición antecedente de humedad.
+
+La formulación básica del método se expresa mediante la siguiente relación:
+
+\begin{{equation}}
+Q=\frac{{(P-0.2S)^2}}{{P+0.8S}}
+\end{{equation}}
+
+Donde:
+
+$Q$: Escorrentía directa o precipitación efectiva.
+
+$P$: Precipitación considerada.
+
+$S$: Diferencia potencial máxima entre $P$ y $Q$ a la hora en que se inicia la tormenta y representa proporcionalmente la pérdida de escorrentía por infiltración, intercepción y almacenamiento superficial.
+
+Los estudios empíricos realizados por el SCS permitieron relacionar la máxima infiltración potencial con un parámetro de referencia denominado Número de Curva, $CN$, cuyos valores están tabulados entre 0 y 100.
+
+\begin{{equation}}
+S=\frac{{1000}}{{CN}}-10
+\end{{equation}}
+
+Donde:
+
+$CN$: Número de Curva.
+
+$S$: Diferencia potencial máxima entre $P$ y $Q$ a la hora en que se inicia la tormenta y representa proporcionalmente la pérdida de escorrentía por infiltración, intercepción y almacenamiento superficial, expresada en pulgadas.
+
+Para la aplicación en unidades métricas se utiliza:
+
+\begin{{equation}}
+S=\frac{{25400}}{{CN}}-254
+\end{{equation}}
+
+\subsection{{Tipo de suelo}}
+
+Para la aplicación del método SCS, los suelos se clasifican en uno de los cuatro grupos hidrológicos existentes. Estos grupos van desde A hasta D, representando el grupo A un potencial de escurrimiento mínimo y el D un potencial de escurrimiento alto. Para asignar a un suelo un grupo determinado se consideran su composición, textura, permeabilidad y las condiciones que controlan su capacidad de infiltración.
+
+\begin{{table}}[H]
+\centering
+\caption{{Clasificación de grupos hidrológicos del suelo.}}
+\label{{tab:hsg_teoria}}
+\begin{{tabular}}{{p{{1.4cm}}p{{13.6cm}}}}\toprule
+\textbf{{Grupo de suelos}} & \textbf{{Descripción de las características del suelo}} \\\midrule
+A & Suelo con bajo potencial de escurrimiento; incluye arenas profundas con muy poco limo y arcilla; también suelo permeable con grava en el perfil. Infiltración básica: 8--12 mm/h. \\
+B & Suelos con moderadamente bajo potencial de escurrimiento. Son suelos arenosos menos profundos y más agregados que el grupo A. Este grupo tiene una infiltración mayor que el promedio cuando está húmedo. Ejemplos: suelos migajones, arenosos ligeros y migajones limosos. Infiltración básica: 4--8 mm/h. \\
+C & Suelos con moderadamente alto potencial de escurrimiento. Comprende suelos someros y suelos con considerable contenido de arcilla, pero menos que el grupo D. Este grupo tiene una infiltración menor que el promedio después de saturación. Ejemplo: suelos migajones arcillosos. Infiltración básica: 1--4 mm/h. \\
+D & Suelos con alto potencial de escurrimiento. Por ejemplo, suelos pesados, con alto contenido de arcillas expandibles y suelos someros con materiales fuertemente cementados. Infiltración básica: menor a 1 mm/h. \\
+\bottomrule
+\end{{tabular}}
+\fuente{{Adaptado de la Resolución 865 de 2004.}}
+\end{{table}}
+
+\subsection{{Condición hidrológica}}
+
+El tipo de vegetación y la densidad de la cobertura en la cuenca tienen una gran influencia en la capacidad de infiltración del suelo. A partir de las siguientes categorías se realiza la clasificación de la condición hidrológica.
+
+\begin{{table}}[H]
+\centering
+\caption{{Condición hidrológica según el uso del suelo.}}
+\label{{tab:condicion_hidrologica}}
+\begin{{tabular}}{{p{{3cm}}p{{12cm}}}}\toprule
+\textbf{{Uso del suelo}} & \textbf{{Condición hidrológica}} \\\midrule
+Pastos naturales & Pastos en condiciones malas: dispersos, fuertemente pastoreados, con menos de la mitad del área total con cobertura vegetal. Pastos en condiciones regulares: moderadamente pastoreados, con la mitad o tres cuartas partes del área total con cubierta vegetal. Pastos en buenas condiciones: ligeramente pastoreados y con más de las tres cuartas partes del área total con cubierta vegetal. \\
+Áreas boscosas & Áreas en condiciones malas: árboles dispersos y fuertemente pastoreadas, sin crecimiento rastrero. Áreas en condiciones regulares: moderadamente pastoreadas y con algo de crecimiento. Áreas buenas: densamente pobladas y sin pastorear. \\
+Pastizales mejorados & Pastizales mezclados con leguminosas sujetas a un cuidadoso sistema de manejo de pastoreo. Son considerados como buenas condiciones hidrológicas. \\
+Rotación de praderas & Praderas densas, moderadamente pastoreadas, usadas en una bien planeada rotación de cultivos y praderas; son consideradas como en buenas condiciones hidrológicas. Áreas con material disperso y sobrepastoreado son consideradas como malas condiciones hidrológicas. \\
+Cultivos & Condiciones hidrológicas buenas se refieren a cultivos que forman parte de una buena rotación de cultivos, tales como cultivos de escarda, praderas y cultivos tupidos. Condiciones hidrológicas malas se refieren a cultivos manejados basándose en monocultivos. \\
+\bottomrule
+\end{{tabular}}
+\fuente{{Adaptado de la Resolución 865 de 2004.}}
+\end{{table}}
+
+\subsection{{Estimación de la Curva Numérica}}
+
+La Curva Numérica se estima luego de clasificar el grupo de suelo, el uso del suelo, el manejo y la condición hidrológica. Para el análisis se adopta la condición promedio de humedad antecedente, correspondiente a $CN_{{II}}$.
+
+\subsection{{Cobertura y uso del suelo}}
+
+Con el fin de caracterizar el comportamiento hidrológico superficial de la cuenca, se realiza la identificación y clasificación de las coberturas y usos del suelo a partir de información cartográfica oficial, empleando la base de datos CORINE Land Cover Colombia 2018 del IDEAM.
+
+A partir de dicha información se obtiene el mapa de coberturas de la tierra correspondiente al área de la cuenca, el cual permite identificar las principales clases de cobertura presentes.
+
+Con base en las coberturas identificadas, estas se reclasifican de acuerdo con la metodología del Servicio de Conservación de Suelos, asignando a cada clase el correspondiente tipo de uso del suelo y su condición hidrológica.
+
+\begin{{table}}[H]
+\centering
+\caption{{Reclasificación de coberturas y usos del suelo según la metodología SCS.}}
+\label{{tab:corine_scs_proyecto}}
+\resizebox{{0.98\textwidth}}{{!}}{{%
+\begin{{tabular}}{{lll}}\toprule
+\textbf{{Cobertura}} & \textbf{{Uso del suelo según SCS}} & \textbf{{Condición hidrológica}} \\\midrule
+{cn_landcover_table_tex}
+\bottomrule
+\end{{tabular}}%
+}}
+\fuente{{Elaboración propia a partir de CORINE Land Cover Colombia 2018 -- IDEAM y la metodología SCS.}}
+\end{{table}}
+
+{rf'''
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.82\textwidth,height=0.30\textheight,keepaspectratio]{{{corine_fig}}}
+\caption{{Mapa de coberturas de la tierra de la cuenca a partir de CORINE Land Cover Colombia 2018.}}
+\label{{fig:corine}}
+\fuente{{IDEAM, adaptación propia.}}
+\end{{figure}}
+''' if corine_fig else ''}
+
+\subsection{{Caracterización de suelos y litología}}
+
+La caracterización de los suelos de la cuenca se realiza a partir de la información litológica disponible, la cual se reclasifica en grupos hidrológicos del SCS según su capacidad de infiltración y comportamiento frente a la escorrentía superficial.
+
+\begin{{table}}[H]
+\centering
+\caption{{Clasificación de tipos de suelo por litología según el método SCS.}}
+\label{{tab:litologia_hsg_proyecto}}
+\resizebox{{0.96\textwidth}}{{!}}{{%
+\begin{{tabular}}{{ll}}\toprule
+\textbf{{Litología}} & \textbf{{Tipo de suelo según clasificación CN del SCS}} \\\midrule
+{cn_geology_table_tex}
+\bottomrule
+\end{{tabular}}%
+}}
+\fuente{{Elaboración propia a partir de información del Servicio Geológico Colombiano y de la clasificación hidrológica del SCS.}}
+\end{{table}}
+
+{rf'''
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.82\textwidth,height=0.30\textheight,keepaspectratio]{{{hsg_fig}}}
+\caption{{Distribución litológica y clasificación hidrológica de los suelos de la cuenca.}}
+\label{{fig:hsg}}
+\fuente{{Elaboración propia a partir del Servicio Geológico Colombiano.}}
+\end{{figure}}
+''' if hsg_fig else ''}
+
+\subsection{{Determinación del Número de Curva}}
+
+Para cada unidad homogénea de la cuenca se asigna un valor de $CN$ correspondiente a la condición promedio de humedad antecedente ($CN_{{II}}$), considerando la combinación entre el tipo de cobertura del suelo, su condición y el grupo hidrológico del suelo.
+
+Posteriormente se calcula el $CN$ ponderado de la cuenca mediante un promedio ponderado por áreas, utilizando como factores de ponderación el área asociada a cada unidad:
+
+\begin{{equation}}
+CN_{{promedio}}=\frac{{\sum CN_iA_i}}{{\sum A_i}}
+\end{{equation}}
+
+\begin{{table}}[H]
+\centering
+\caption{{Cálculo del Número de Curva por unidades homogéneas de la cuenca.}}
+\label{{tab:cn}}
+\resizebox{{\textwidth}}{{!}}{{%
+\begin{{tabular}}{{llllrrr}}\toprule
+\textbf{{Cobertura}} & \textbf{{Uso SCS}} & \textbf{{Condición}} & \textbf{{Grupo HSG}} & \textbf{{CN II}} & \textbf{{Área (km$^2$)}} & \textbf{{$CN_iA_i$}} \\\midrule
+{cn_table_tex}
+\midrule
+\multicolumn{{5}}{{l}}{{\textbf{{Número de Curva ponderado}}}} & \textbf{{{_n(summary.get('area_km2'))}}} & \textbf{{{_n(cn_weighted_report,1)}}} \\
+\bottomrule
+\end{{tabular}}%
+}}
+\fuente{{Elaboración propia.}}
+\end{{table}}
+
+A partir del procedimiento descrito se obtiene un valor de Número de Curva ponderado igual a \textbf{{{_n(cn_weighted_report,2)}}}, el cual se adopta como parámetro representativo de la cuenca para la estimación de pérdidas en el análisis hidrológico.
+
+La retención potencial máxima y la abstracción inicial se determinan mediante:
+
+\begin{{equation}}
+S=\frac{{25400}}{{CN}}-254={_n(cn_data.get('s_retention_mm'),1)}\ \text{{mm}},
+\qquad
+I_a=0.2S={_n(cn_data.get('ia_abstraction_mm'),1)}\ \text{{mm}}
+\end{{equation}}
+
+{rf'''
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.82\textwidth,height=0.30\textheight,keepaspectratio]{{{cn_fig}}}
+\caption{{Distribución espacial del Número de Curva en la cuenca.}}
+\label{{fig:cn}}
+\fuente{{Elaboración propia.}}
+\end{{figure}}
+''' if cn_fig else ''}
+
+\section{{Información Meteorológica}}
+
+\subsection{{Estaciones Pluviométricas}}
+Para la caracterización hidrometeorológica del área de estudio se consultó el Catálogo Nacional de Estaciones del IDEAM (DHIME). En el Cuadro~\ref{{tab:estaciones_ideam}} y en la Figura~\ref{{fig:estaciones}} se presentan las estaciones seleccionadas en el área de influencia del proyecto.
+
+\begin{{table}}[H]
+\centering
+\caption{{Estaciones meteorológicas oficiales del IDEAM identificadas en el área de influencia.}}
+\label{{tab:estaciones_ideam}}
+\resizebox{{\textwidth}}{{!}}{{%
+\begin{{tabular}}{{llllrrrr}}\toprule
+\textbf{{Código}} & \textbf{{Nombre}} & \textbf{{Categoría}} & \textbf{{Altitud}} & \textbf{{Latitud}} & \textbf{{Longitud}} & \textbf{{Municipio}} & \textbf{{Dist.}} \\\midrule
+{st_table_tex}
+\bottomrule
+\end{{tabular}}%
+}}
+\end{{table}}
+
+{rf'''
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.82\textwidth,height=0.32\textheight,keepaspectratio]{{{st_fig}}}
+\caption{{Ubicación espacial de las estaciones meteorológicas del IDEAM en el entorno de la cuenca.}}
+\label{{fig:estaciones}}
+\end{{figure}}
+''' if st_fig else ''}
+
+\section{{Análisis Pluviométrico}}
+
+\subsection{{Polígonos de Thiessen}}
+
+Con base en las estaciones seleccionadas se aplica el método de Polígonos de Thiessen, con el objetivo de determinar el área de influencia de cada estación dentro de la cuenca. La metodología subdivide el área de drenaje en regiones de influencia asociadas a cada estación, permitiendo establecer factores de ponderación espacial para la estimación de la precipitación representativa de la cuenca.
+
+En el Cuadro~\ref{{tab:thiessen}} y la Figura~\ref{{fig:thiessen}} se presenta la distribución de áreas de influencia.
+
+\begin{{table}}[H]
+\centering
+\caption{{Ponderación espacial de estaciones según Polígonos de Thiessen.}}
+\label{{tab:thiessen}}
+\begin{{tabular}}{{llrr}}\toprule
+\textbf{{Código}} & \textbf{{Estación Meteorológica}} & \textbf{{Área de Influencia (km$^2$)}} & \textbf{{\% Área Cuenca}} \\\midrule
+{th_table_tex}
+\bottomrule
+\end{{tabular}}
+\end{{table}}
+
+{rf'''
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.80\textwidth,height=0.32\textheight,keepaspectratio]{{{thiessen_fig}}}
+\caption{{Polígonos de Thiessen y áreas de influencia pluviométrica sobre la cuenca.}}
+\label{{fig:thiessen}}
+\end{{figure}}
+''' if thiessen_fig else ''}
+
+\section{{Curvas Intensidad--Duración--Frecuencia}}
+
+A partir del análisis estadístico de las lluvias máximas anuales se construyen las Curvas Intensidad--Duración--Frecuencia (IDF) para las estaciones pluviométricas representativas, considerando los periodos de retorno de interés. Estas curvas permiten establecer la intensidad de precipitación asociada a diferentes duraciones y frecuencias de ocurrencia y constituyen un insumo fundamental para la construcción de las lluvias de diseño.
+
+La formulación utilizada se expresa como:
+\begin{{equation}}
+I = \frac{{a \cdot T_r^b}}{{(d + c)^k}}
+\end{{equation}}
+Donde $I$ es la intensidad de precipitación en mm/h y $d$ es la duración del evento en minutos. En la Figura~\ref{{fig:idf}} se ilustran las familias de curvas generadas.
+
+{rf'''
+\begin{{figure}}[H]
+\centering
+\includegraphics[width=0.84\textwidth,height=0.32\textheight,keepaspectratio]{{{idf_fig}}}
+\caption{{Curvas Intensidad--Duración--Frecuencia (IDF) calculadas para la cuenca.}}
+\label{{fig:idf}}
+\end{{figure}}
+''' if idf_fig else ''}
+
+\section{{Análisis Morfométrico y Caracterización de Subcuencas}}
 
 \subsection{{Subcuencas y Red de Drenaje}}
 A partir de los puntos de confluencia y umbrales de acumulación se subdividió la cuenca en \textbf{{{summary.get('subbasin_count','N/D')}}} subcuencas tributarias. En las Figuras~\ref{{fig:watershed_drenaje}} y~\ref{{fig:subcuencas}} y en el Cuadro~\ref{{tab:subcuencas}} se detalla la partición territorial.
@@ -498,7 +947,7 @@ A partir de los puntos de confluencia y umbrales de acumulación se subdividió 
 \end{{tabular}}
 \end{{table}}
 
-\subsection{{Cauce Principal y Perfil Longitudinal}}
+\subsection{{Características del Cauce Principal y Perfil Longitudinal}}
 En el Cuadro~\ref{{tab:cauce}} se resumen las características geométricas y altimétricas del cauce principal, complementadas con su perfil longitudinal en la Figura~\ref{{fig:perfil}}.
 
 \begin{{table}}[H]
@@ -525,142 +974,11 @@ Pendiente Media del Cauce ($S$) & {_n(summary.get('main_channel_slope_percent'),
 \end{{figure}}
 ''' if profile else ''}
 
-\subsection{{Cartografía Morfométrica Complementaria}}
+\subsection{{Cartografía Complementaria de Subcuencas y Red de Drenaje}}
 La cartografía generada constituye la base geométrica para la formulación de los modelos de escorrentía superficial, delimitación de zonas de recarga y dimensionamiento de la red de colectores e infraestructuras de paso.
 
 % ============================== 6. CARACTERIZACIÓN HIDROLÓGICA ==============================
-\section{{Caracterización Hidrológica}}
-
-\subsection{{Estaciones IDEAM}}
-Para la caracterización hidrometeorológica del área de estudio se consultó el Catálogo Nacional de Estaciones del IDEAM (DHIME). En el Cuadro~\ref{{tab:estaciones_ideam}} y en la Figura~\ref{{fig:estaciones}} se presentan las estaciones seleccionadas en el área de influencia del proyecto.
-
-\begin{{table}}[H]
-\centering
-\caption{{Estaciones meteorológicas oficiales del IDEAM identificadas en el área de influencia.}}
-\label{{tab:estaciones_ideam}}
-\resizebox{{\textwidth}}{{!}}{{%
-\begin{{tabular}}{{llllrrrr}}\toprule
-\textbf{{Código}} & \textbf{{Nombre}} & \textbf{{Categoría}} & \textbf{{Altitud}} & \textbf{{Latitud}} & \textbf{{Longitud}} & \textbf{{Municipio}} & \textbf{{Dist.}} \\\midrule
-{st_table_tex}
-\bottomrule
-\end{{tabular}}%
-}}
-\end{{table}}
-
-{rf'''
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.82\textwidth,height=0.32\textheight,keepaspectratio]{{{st_fig}}}
-\caption{{Ubicación espacial de las estaciones meteorológicas del IDEAM en el entorno de la cuenca.}}
-\label{{fig:estaciones}}
-\end{{figure}}
-''' if st_fig else ''}
-
-\subsection{{Polígonos de Thiessen}}
-Con el fin de determinar la representatividad espacial de las estaciones meteorológicas sobre la cuenca hidrográfica, se trazaron los Polígonos de Thiessen (diagramas de Voronoi recortados a la divisoria). En el Cuadro~\ref{{tab:thiessen}} y la Figura~\ref{{fig:thiessen}} se detalla la distribución de áreas de influencia.
-
-\begin{{table}}[H]
-\centering
-\caption{{Ponderación espacial de estaciones según Polígonos de Thiessen.}}
-\label{{tab:thiessen}}
-\begin{{tabular}}{{llrr}}\toprule
-\textbf{{Código}} & \textbf{{Estación Meteorológica}} & \textbf{{Área de Influencia (km$^2$)}} & \textbf{{\% Área Cuenca}} \\\midrule
-{th_table_tex}
-\bottomrule
-\end{{tabular}}
-\end{{table}}
-
-{rf'''
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.80\textwidth,height=0.32\textheight,keepaspectratio]{{{thiessen_fig}}}
-\caption{{Polígonos de Thiessen y áreas de influencia pluviométrica sobre la cuenca.}}
-\label{{fig:thiessen}}
-\end{{figure}}
-''' if thiessen_fig else ''}
-
-\subsection{{Curvas IDF}}
-A partir de las ecuaciones regionales del IDEAM (Vargas y Díaz para Colombia) se construyeron las Curvas IDF para periodos de retorno de 2.33, 5, 10, 25, 50 y 100 años:
-\begin{{equation}}
-I = \frac{{a \cdot T_r^b}}{{(d + c)^k}}
-\end{{equation}}
-Donde $I$ es la intensidad de precipitación en mm/h y $d$ es la duración del evento en minutos. En la Figura~\ref{{fig:idf}} se ilustran las familias de curvas generadas.
-
-{rf'''
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.84\textwidth,height=0.32\textheight,keepaspectratio]{{{idf_fig}}}
-\caption{{Curvas Intensidad--Duración--Frecuencia (IDF) calculadas para la cuenca.}}
-\label{{fig:idf}}
-\end{{figure}}
-''' if idf_fig else ''}
-
-\subsection{{Número de Curva SCS-CN}}
-El método de la Curva Numérica del SCS cuantifica la escorrentía directa integrando el tipo de suelo (grupos hidrológicos A, B, C, D) y la cobertura vegetal (CORINE Land Cover). En el Cuadro~\ref{{tab:cn}} y la Figura~\ref{{fig:cn}} se resumen las unidades homogéneas identificadas:
-
-\begin{{table}}[H]
-\centering
-\caption{{Cálculo del Número de Curva (CN) por unidades homogéneas de la cuenca.}}
-\label{{tab:cn}}
-\resizebox{{\textwidth}}{{!}}{{%
-\begin{{tabular}}{{llllrrr}}\toprule
-\textbf{{Cobertura}} & \textbf{{Uso SCS}} & \textbf{{Condición}} & \textbf{{Grupo}} & \textbf{{CN}} & \textbf{{Área (km$^2$)}} & \textbf{{CN $\times$ A}} \\\midrule
-{cn_table_tex}
-\midrule
-\multicolumn{{5}}{{l}}{{\textbf{{Número de Curva Ponderado ($CN_{{promedio}}$)}}}} & \textbf{{{_n(summary.get('area_km2'))}}} & \textbf{{{_n(summary.get('cn_weighted'), 1)}}} \\
-\bottomrule
-\end{{tabular}}%
-}}
-\end{{table}}
-
-La retención potencial máxima de humedad ($S$) y la abstracción inicial ($I_a$) se obtienen como:
-\begin{{equation}}
-S = \frac{{25400}}{{CN}} - 254 = {_n(summary.get('curve_number', {}).get('s_retention_mm'), 1)} \text{{ mm}}, \quad I_a = 0.2 S = {_n(summary.get('curve_number', {}).get('ia_abstraction_mm'), 1)} \text{{ mm}}
-\end{{equation}}
-
-{rf'''
-\begin{{figure}}[H]
-\centering
-\includegraphics[width=0.80\textwidth,height=0.30\textheight,keepaspectratio]{{{cn_fig}}}
-\caption{{Distribución de coberturas de suelo y Número de Curva ponderado.}}
-\label{{fig:cn}}
-\end{{figure}}
-''' if cn_fig else ''}
-
-\subsection{{Tiempo de Concentración}}
-En el Cuadro~\ref{{tab:expresiones_tc}} se presentan las expresiones matemáticas empleadas en el análisis:
-
-\begin{{table}}[H]
-\centering
-\caption{{Expresiones matemáticas para la estimación de tiempos de concentración.}}
-\label{{tab:expresiones_tc}}
-\begin{{tabular}}{{p{{3.2cm}}p{{5.0cm}}p{{6.8cm}}}}\toprule
-\textbf{{Método}} & \textbf{{Ecuación}} & \textbf{{Definición de Variables}} \\\midrule
-Kirpich & $T_c = 0.06628 \left(\frac{{L}}{{S^{{0.5}}}}\right)^{{0.77}}$ & $L$: km, $S$: m/m (pendiente total), $T_c$: h. \\
-Témez & $T_c = 0.30 \left(\frac{{L}}{{S^{{0.25}}}}\right)^{{0.76}}$ & $L$: km, $S$: \% (pendiente en porcentaje), $T_c$: h. \\
-Giandotti & $T_c = \frac{{4\sqrt{{A}} + 1.5 L}}{{25.3 \sqrt{{L \cdot S}}}}$ & $A$: km$^2$, $L$: km, $S$: m/m, $T_c$: h. \\
-Johnstone y Cross & $T_c = 2.6 \left(\frac{{L}}{{S^{{0.5}}}}\right)^{{0.5}}$ & $L$: km, $S$: m/km, $T_c$: h. \\
-V.T. Chow & $T_c = 0.273 \left(\frac{{L}}{{S^{{0.5}}}}\right)^{{0.64}}$ & $L$: km, $S$: m/m, $T_c$: h. \\
-\bottomrule
-\end{{tabular}}
-\end{{table}}
-
-En el Cuadro~\ref{{tab:tc_resultados}} se comparan los tiempos de concentración calculados por cada método:
-
-\begin{{table}}[H]
-\centering
-\caption{{Resumen de tiempos de concentración estimados para la cuenca.}}
-\label{{tab:tc_resultados}}
-\begin{{tabular}}{{lrr}}\toprule
-\textbf{{Método Aplicado}} & \textbf{{$T_c$ (Horas)}} & \textbf{{$T_c$ (Minutos)}} \\\midrule
-{tc_rows}
-\midrule
-\textbf{{Promedio Adoptado}} & \textbf{{{_n(tc_avg_h, 2)} h}} & \textbf{{{_n(tc_avg_min, 1)} min}} \\
-\bottomrule
-\end{{tabular}}
-\end{{table}}
-
-\subsection{{Modelación Hidrológica y Caudales Máximos}}
+\section{{Modelación Hidrológica y Caudales Máximos}}
 La transformación de lluvia en escorrentía se efectuó aplicando el modelo del Hidrograma Unitario del SCS conjuntamente con el Método Racional. En el Cuadro~\ref{{tab:caudales}} se consolidan los caudales pico estimados para cada periodo de retorno, y en la Figura~\ref{{fig:hidrogramas}} se grafican los hidrogramas temporales de diseño $Q(t)$.
 
 \begin{{table}}[H]
@@ -701,7 +1019,7 @@ La integración morfométrica e hidrológica evidencia una cuenca con factor de 
 
 % ============================== 9. LIMITACIONES ==============================
 \section{{Limitaciones Técnicas}}
-Los resultados derivan del procesamiento topográfico de modelos de elevación satelitales y formulaciones hidrológicas sintéticas. El presente estudio no reemplaza levantamientos batimétricos directos en el cauce ni la verificación estructural en campo de las obras de paso existentes.
+Los resultados se derivan del procesamiento de información topográfica, hidrometeorológica y cartográfica disponible, junto con metodologías hidrológicas de uso técnico. El presente estudio no reemplaza levantamientos batimétricos directos en el cauce ni la verificación estructural en campo de las obras de paso existentes.
 
 % ============================== 10. ANEXOS IDEAM ==============================
 \newpage
@@ -848,12 +1166,12 @@ def generar_informes(
 
     # 2. Generación del Informe Técnico PDF (LaTeX + Tectonic)
     report_tex = output_dir / "informe_hydrobasin.tex"
-    report_tex.write_text(_report(summary, figures, subbasins, loc), encoding="utf-8")
+    report_tex.write_text(_report(output_dir, summary, figures, subbasins, loc), encoding="utf-8")
     report_pdf, report_err = _compile_report(report_tex, output_dir)
 
-    # 3. Generación del Informe Técnico en Word (.docx) mediante Pandoc / python-docx
+    # 3. Generación del Informe Técnico en Word (.docx) directamente desde LaTeX mediante Pandoc
     docx_path = output_dir / "informe_hydrobasin.docx"
-    pandoc_ok = _convert_with_pandoc(report_tex, docx_path)
+    pandoc_ok = convert_latex_to_docx(report_tex, docx_path)
     if not pandoc_ok or not docx_path.exists():
         try:
             generar_informe_docx(docx_path, summary, figures, subbasins, loc)

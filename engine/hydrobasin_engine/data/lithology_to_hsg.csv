@@ -1,0 +1,55 @@
+simbolo_uc,patron_litologico,grupo_hidrologico,criterio_permeabilidad
+Q-al,Depositos aluviales y de llanuras aluviales,B,Alta a moderada permeabilidad en aluviones y arenas de valles
+Q-t,Terrazas aluviales y llanuras de inundacion,B,Moderada infiltracion en terrazas y gravas
+Q-ab,Abanicos aluviales y conos de deyeccion,A,Alta tasa de transmision hidrica en gravas y arenas
+Q-ca,Depositos coluviales y de remocion en masa,C,Infiltracion lenta en bloques embebidos en matriz arcillo-limosa
+Q-e,Depositos eolicos y dunas,A,Alta permeabilidad en arenas finas a medias sueltas
+Q-ll,Depositos de llanura aluvial y de desborde,C,Infiltracion lenta a moderada en limos y arcillas de desborde
+N2Q1-VCc,Arenitas feldespaticas y liticas arcillolitas y conglomerados,B,Moderada tasa de infiltracion en arenitas y conglomerados
+n4n6-Sc,Arenitas liticas con intercalaciones de arcillolitas,B,Moderada permeabilidad en secuencias arenoso-conglomeraticas
+n1n3-Sc,Arenitas liticas y conglomerados con limolitas,B,Moderada tasa de infiltracion en arenitas de grano medio
+n1n2-Sc,Arenitas y limolitas con bancos de conglomerados,B,Moderada capacidad de infiltracion
+n5n6-Sc,Arenitas friables y conglomerados polimicticos,B,Moderada a alta infiltracion en facies arenosas
+e4e6-Sc,Arenitas cuarzosas y limolitas,B,Moderada permeabilidad
+e1e3-Sc,Arenitas feldespaticas y arcillolitas,B,Infiltracion moderada
+e6e9-Si,Arcillolitas lodolitas y limolitas,C,Baja tasa de infiltracion en secuencias finas
+e6e9-Sc,Arenitas y arcillolitas carbonosas,C,Moderadamente lenta infiltracion
+K1-Ss,Arenitas cuarzosas de grano grueso a medio,A,Alta permeabilidad en areniscas cuarzosas masivas
+K1-Sc,Arenitas conglomeraticas y lodolitas,B,Moderada infiltracion
+K2-Sc,Arenitas y lutitas intercaladas,C,Infiltracion lenta en rocas sedimentarias interestratificadas
+K2-Sm,Lodolitas silíceas arcillolitas y calizas micriticas,D,Muy baja permeabilidad en rocas finas densas y shales
+K1K2-St,Lutitas negras calizas y arenitas finas,C,Infiltracion lenta
+J-Sc,Arenitas rojizas conglomerados y tobas,B,Moderada tasa de infiltracion
+J3K1-Sc,Arenitas feldespaticas y lodolitas rojas,C,Infiltracion moderadamente lenta
+Tr-Sc,Arenitas y conglomerados continentales,B,Moderada infiltracion
+Pz-Sch,Esquistos filitas y cuarcitas,C,Baja permeabilidad en basamento metamorfico fracturado
+Pz-Gr,Granitoides y rocas plutonicas,C,Baja infiltracion en cuerpos plutonicos
+Mz-Gr,Batolitos y stocks granodioriticos,C,Baja infiltracion superficial
+K-V,Rocas volcanicas basaltos y andesitas,C,Infiltracion lenta en coladas volcanicas
+K-Vc,Rocas piroclasticas y tobas,B,Moderada infiltracion en piroclastos
+N-V,Flujos de lava y domos volcanicos,C,Baja permeabilidad en lavas consolidadas
+N-Vc,Piroclastos tobas y cenizas volcanicas,A,Alta infiltracion y porosidad en cenizas volcanicas
+Q-vc,Cenizas y piroclastos cuaternarios,A,Alta infiltracion en depositos piroclasticos recientes
+*,aluvial,B,Patron generico aluvial moderado
+*,arena,A,Patron generico arenoso de alta infiltracion
+*,grava,A,Patron generico gravoso permeable
+*,abanico,A,Patron generico abanicos aluviales
+*,piroclasto,A,Patron generico piroclastos no consolidados
+*,arenita,B,Patron generico arenitas y areniscas
+*,arenisca,B,Patron generico areniscas
+*,conglomerado,B,Patron generico conglomerados
+*,toba,B,Patron generico tobas volcanicas
+*,limolita,C,Patron generico limolitas y margas
+*,arcillolita,C,Patron generico arcillolitas
+*,arcillosa,C,Patron generico texturas arcillo-limosas
+*,lutita,C,Patron generico lutitas y shales laminados
+*,esquisto,C,Patron generico rocas metamorficas foliadas
+*,filita,C,Patron generico filitas
+*,granito,C,Patron generico rocas igneas cristalinas
+*,andesita,C,Patron generico rocas volcanicas intermedias
+*,basalto,C,Patron generico rocas volcanicas basicas
+*,lodolita,D,Patron generico lodolitas densas de muy baja infiltracion
+*,shale,D,Patron generico shales arcillosos
+*,arcilla pesada,D,Patron generico arcillas pesadas plasticas
+*,roca masiva,D,Patron generico rocas masivas no fracturadas
+*,afloramiento,D,Patron generico afloramientos rocosos continuos
