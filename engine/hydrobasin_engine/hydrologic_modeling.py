@@ -26,7 +26,7 @@ def compute_peak_discharges(
     tc_hours: float,
     cn_weighted: float | None,
     design_intensities: dict[str, float] | None,
-    return_periods: list[float | int],
+    return_periods: list[float | int] | None = None,
     runoff_coefficient: float | None = None,
     design_precipitation_mm: dict[str, float] | None = None,
     design_flow_strategy: str | None = None,
@@ -47,13 +47,15 @@ def compute_peak_discharges(
     if area <= 0 or tc <= 0:
         raise ValueError("Área y tiempo de concentración deben ser mayores que cero.")
 
-    periods = [float(v) for v in return_periods]
+    periods = [float(v) for v in (return_periods or [])]
     if not periods:
         return {
             "status": "unavailable",
             "reason": "No se suministraron períodos de retorno.",
             "results_by_return_period": [],
             "hydrographs": {},
+            "runoff_coefficient_c": runoff_coefficient,
+            "design_flow_strategy": design_flow_strategy,
         }, None
 
     if runoff_coefficient is not None:
